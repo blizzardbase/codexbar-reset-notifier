@@ -73,6 +73,34 @@ class FormattingTests(unittest.TestCase):
         )
         self.assertEqual(line, "Codex session: usage unavailable; reset time unavailable")
 
+    def test_spring_forward_uses_new_local_offset_without_changing_countdown(self):
+        now = datetime(2026, 3, 8, 6, 30, tzinfo=timezone.utc)
+        window = {
+            "usedPercent": 50,
+            "resetsAt": "2026-03-08T07:30:00Z",
+            "windowMinutes": 300,
+        }
+        line = usage_bot.format_usage_window(
+            "claude", "session", window, now, "America/New_York"
+        )
+        self.assertEqual(
+            line, "Claude session: 50% left; resets 3:30 AM, Sun (1h 0m)"
+        )
+
+    def test_fall_back_uses_repeated_local_hour_with_absolute_countdown(self):
+        now = datetime(2026, 11, 1, 5, 30, tzinfo=timezone.utc)
+        window = {
+            "usedPercent": 50,
+            "resetsAt": "2026-11-01T06:30:00Z",
+            "windowMinutes": 300,
+        }
+        line = usage_bot.format_usage_window(
+            "claude", "session", window, now, "America/New_York"
+        )
+        self.assertEqual(
+            line, "Claude session: 50% left; resets 1:30 AM, Sun (1h 0m)"
+        )
+
     def test_full_message_reads_each_provider_once(self):
         records = {
             "claude": {
@@ -154,6 +182,23 @@ class OffsetTests(unittest.TestCase):
         self.assertEqual(result, 15)
         self.assertEqual(process.call_count, 2)
         self.assertEqual(write.call_args_list, [mock.call(12), mock.call(15)])
+
+
+class ListenerRecoveryTests(unittest.TestCase):
+    def test_unexpected_poll_error_retries_without_exiting(self):
+        with mock.patch.object(
+            usage_bot.common, "telegram_credentials", return_value=("token", "123")
+        ):
+            with mock.patch.object(usage_bot, "read_offset", return_value=10):
+                with mock.patch.object(
+                    usage_bot, "poll_once", side_effect=(ValueError("bad update"), KeyboardInterrupt)
+                ) as poll:
+                    with mock.patch.object(usage_bot.time, "sleep") as sleep:
+                        with mock.patch.object(usage_bot.sys, "stderr"):
+                            with self.assertRaises(KeyboardInterrupt):
+                                usage_bot.run(CONFIG)
+        self.assertEqual(poll.call_count, 2)
+        sleep.assert_called_once_with(5)
 
 
 class TelegramRequestTests(unittest.TestCase):

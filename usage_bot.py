@@ -237,7 +237,7 @@ def run(config: dict, once: bool = False) -> int:
     while True:
         try:
             offset = poll_once(token, offset, allowed_chat_id, config)
-        except RuntimeError as exc:
+        except Exception as exc:
             print(f"ERROR: usage bot poll failed: {exc}", file=sys.stderr)
             time.sleep(5)
 
