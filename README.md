@@ -6,6 +6,8 @@ The message also tells you how many minutes until Codex resets, and when both we
 
 **No AI tokens are consumed.** This project never calls Claude, Codex, an LLM, or any paid AI API. It is plain Python, SSH, cron, the CodexBar CLI, and the Telegram Bot API.
 
+> **Release status:** The projection, notification, validation, and lifecycle logic is covered by automated tests and CI. The generic `deploy_vps.sh` transfer has not yet been exercised against a disposable VPS, so review the generated configuration and deployment commands before the first production install.
+
 ---
 
 ## What you get
