@@ -77,6 +77,13 @@ class TelegramUpdateTests(unittest.TestCase):
         with mock.patch.object(configure_telegram.urllib.request, "urlopen", return_value=response):
             self.assertEqual(configure_telegram.fetch_updates("token"), [])
 
+    def test_api_level_rejection_becomes_a_friendly_runtime_error(self):
+        response = self.response(b'{"ok": false, "description": "rejected"}')
+        with mock.patch.object(configure_telegram.urllib.request, "urlopen", return_value=response):
+            with self.assertRaises(RuntimeError) as ctx:
+                configure_telegram.fetch_updates("token")
+        self.assertEqual(str(ctx.exception), "Telegram rejected the getUpdates request")
+
     def test_http_and_transport_errors_are_friendly_and_hide_the_token(self):
         token = "private-test-token"
         failures = (
