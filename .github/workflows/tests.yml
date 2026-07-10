@@ -1,0 +1,87 @@
+name: tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 is the floor (zoneinfo). Guard the whole supported range.
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Confirm no third-party dependencies are declared
+        run: |
+          if grep -qvE '^\s*(#.*)?$' requirements.txt; then
+            echo "requirements.txt must stay empty of packages" >&2
+            exit 1
+          fi
+
+      - name: Byte-compile every Python file
+        run: python3 -m py_compile common.py monitor.py vps_notifier.py configure_telegram.py tests/*.py
+
+      - name: Run the test suite
+        run: python3 -m unittest discover -v
+
+      - name: Validate the shipped example configuration
+        run: |
+          cp config.example.json config.json
+          python3 monitor.py --validate-config
+          python3 vps_notifier.py --validate-config
+          rm config.json
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check shell syntax
+        run: |
+          for f in scripts/*.sh; do bash -n "$f"; done
+
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y shellcheck
+          shellcheck scripts/*.sh
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse ignored files that should never be tracked
+        run: |
+          for f in .env config.json data; do
+            if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+              echo "$f must never be tracked" >&2
+              exit 1
+            fi
+          done
+
+      - name: Scan for secret-shaped strings
+        run: |
+          set +e
+          # Telegram bot-token shape, PEM headers, assigned credentials.
+          git grep -InE '[0-9]{8,10}:[A-Za-z0-9_-]{35,}' -- . && FAIL=1
+          git grep -InE 'BEGIN (RSA|OPENSSH|EC|DSA|PRIVATE)' -- . && FAIL=1
+          git grep -InE '(password|secret|api_?key|access_?token)[[:space:]]*[=:][[:space:]]*["'"'"']?[A-Za-z0-9_/+-]{12,}' -- . && FAIL=1
+          if [ "${FAIL:-0}" = "1" ]; then
+            echo "secret-shaped string found" >&2
+            exit 1
+          fi
+          echo "no secret-shaped strings"
