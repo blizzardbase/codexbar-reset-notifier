@@ -35,7 +35,7 @@ jobs:
           fi
 
       - name: Byte-compile every Python file
-        run: python3 -m py_compile common.py monitor.py vps_notifier.py configure_telegram.py tests/*.py
+        run: python3 -m py_compile common.py monitor.py usage_bot.py vps_notifier.py configure_telegram.py tests/*.py
 
       - name: Run the test suite
         run: python3 -m unittest discover -v

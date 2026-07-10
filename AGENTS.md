@@ -4,7 +4,7 @@ Instructions for any AI agent or contributor changing this repository.
 
 ## Product purpose
 
-Deliver exactly one private Telegram message when the Claude session window resets, including a dynamically calculated countdown to the Codex reset and both weekly reset times. It must keep working while the user's Mac is asleep or powered off.
+Deliver exactly one Telegram message when the Claude session window resets, including a dynamically calculated countdown to the Codex reset and both weekly reset times. It must keep working while the user's Mac is asleep or powered off. While the Mac is awake, an authorized `/usage` command returns live session and weekly usage to the configured chat.
 
 This is a deterministic utility. It consumes **no** LLM, AI, or paid API tokens. Any change that introduces an AI call, a model API, or a Codex-automation dependency is out of scope and must be rejected.
 
@@ -16,15 +16,17 @@ Two halves that share one module.
 | --- | --- | --- |
 | `common.py` | both | Config load/validate, cycle projection, formatting, atomic JSON, Telegram payloads. The single source of truth. |
 | `monitor.py` | Mac | Read CodexBar, slim the record, sync to VPS (`vps` mode) or evaluate and notify (`local` mode). |
+| `usage_bot.py` | Mac | Long-poll Telegram, authorize the configured chat, and return live CodexBar usage for `/usage`. |
 | `vps_notifier.py` | VPS | Ingest schedules, project cycles, deduplicate, send Telegram. |
 | `configure_telegram.py` | Mac | Discover the chat id and write it to `.env`. |
-| `launchagent.plist.template` | Mac | Rendered by `scripts/install_mac.sh`. |
+| `launchagent.plist.template` | Mac | Scheduled monitor template rendered by `scripts/install_mac.sh`. |
+| `usage-bot-launchagent.plist.template` | Mac | Persistent command-listener template rendered by `scripts/install_mac.sh`. |
 | `scripts/*.sh` | Mac | Install, deploy, test, uninstall. All bash, all idempotent. |
 | `tests/` | anywhere | `unittest` only. Never performs network access. |
 
 ### Files owned by each component
 
-- **Mac-only:** `monitor.py`, `configure_telegram.py`, `launchagent.plist.template`, `scripts/install_mac.sh`, `scripts/uninstall_mac.sh`.
+- **Mac-only:** `monitor.py`, `usage_bot.py`, `configure_telegram.py`, both LaunchAgent templates, `scripts/install_mac.sh`, `scripts/uninstall_mac.sh`.
 - **VPS-only:** `vps_notifier.py`. Deployed together with `common.py`, `config.json`, `.env`, `requirements.txt`.
 - **Shared:** `common.py`. Changing it affects both halves — redeploy the VPS after touching it.
 - **Runtime, never committed:** `data/schedule.json`, `data/vps-state.json`, `data/state.json`, `data/*.log`.
@@ -34,7 +36,7 @@ Two halves that share one module.
 - The Mac is authoritative whenever it is online. CodexBar's `usage.primary.resetsAt` is the session anchor; `usage.secondary.resetsAt` is the weekly anchor.
 - `windowMinutes` is the repeating interval. **Never hard-code five hours, seven days, or any other interval.** If a provider stops reporting `windowMinutes` and its anchor has passed, the window is unprojectable and must be reported as unavailable, not guessed.
 - The VPS projects forward from the last confirmed anchor. Every live Mac sync overwrites the anchors, correcting drift.
-- Only reset metadata crosses the network. `monitor.slim_record()` strips usage percentages, account emails, and everything else. Do not widen it.
+- Only reset metadata crosses from the Mac to the VPS. `monitor.slim_record()` strips usage percentages, account emails, and everything else. Do not widen it. A live percentage may leave the Mac only in the `/usage` reply to the configured Telegram chat.
 - CodexBar may report several records per provider. **Never take `entries[0]`.** `common.require_single_record()` returns the sole record or raises, naming the accounts it saw.
 - `monitor.build_codexbar_command()` owns the exact argv and passes **no account flags**. `--account`, `--account-index`, and `--all-accounts` all address CodexBar *token accounts*; verified against 0.37.2, Claude answers `No token accounts configured for claude.` and Codex answers `codex does not support token accounts.` Passing any of them breaks both providers. Tests assert the argv element for element.
 - CodexBar reports provider failures as a JSON `error` object on **stdout**, sometimes with exit 0. `run_codexbar()` checks both and raises `CodexbarError` carrying CodexBar's own message. **Never downgrade or swallow a provider error** — an expired-credentials failure must not be reinterpreted as anything benign.
@@ -42,10 +44,12 @@ Two halves that share one module.
 
 - Secrets live only in `.env` (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`). Never in `config.json`, never in code, never in logs.
 - Never print, echo, or interpolate a token into an error message, a log line, or a commit.
+- `/usage` must respond only when the incoming chat id exactly matches `TELEGRAM_CHAT_ID`; every other chat is ignored without a reply.
+- Live usage percentages may be returned to the authorized Telegram chat, but must never be added to the Mac-to-VPS payload.
 - No inbound VPS ports. Mac→VPS is outbound SSH with `BatchMode=yes`. VPS→Telegram is outbound HTTPS.
 - No `sudo`. Nothing writes outside `vps_remote_dir` on the VPS or `~/Library/LaunchAgents` on the Mac.
 - Never touch `/etc`, SSH server config, firewall rules, or system services.
-- Uninstall scripts remove only entries carrying the `# codexbar-reset-notifier` marker, and only this project's LaunchAgent label.
+- Uninstall scripts remove only entries carrying the `# codexbar-reset-notifier` marker, and only this project's two LaunchAgent labels.
 
 ## Configuration rules
 
@@ -74,6 +78,8 @@ Two halves that share one module.
 - Decision table in `common.evaluate_reset()`: `send`, `seed` (first run, adopt silently), `duplicate`, `expired` (older than `RESET_GRACE_SECONDS`, record without announcing), `unavailable`.
 - `evaluate_reset()` is pure. Only `mark_sent()` mutates state, and only the caller writes it.
 - Staleness never silences a notification. A stale schedule warns on stderr and still projects — offline continuation is the point.
+- `/usage`, `/usage bot`, and `/usage@botname` are accepted while the Mac is awake. The response contains live session and weekly usage and goes only to the originating configured chat.
+- The Telegram update offset is stored atomically under ignored `data/`; old pre-install commands are not replayed.
 
 ## Testing requirements
 
@@ -85,7 +91,7 @@ Two halves that share one module.
 ## Commands to run before changing code
 
 ```bash
-python3 -m py_compile common.py monitor.py vps_notifier.py configure_telegram.py
+python3 -m py_compile common.py monitor.py usage_bot.py vps_notifier.py configure_telegram.py
 python3 -m unittest discover -v
 for f in scripts/*.sh; do bash -n "$f"; done
 python3 monitor.py --validate-config --config config.example.json

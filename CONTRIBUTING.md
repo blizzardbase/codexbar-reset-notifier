@@ -16,7 +16,7 @@ These are not style preferences. A change that breaks one of them will be declin
 ## Before you open a pull request
 
 ```bash
-python3 -m py_compile common.py monitor.py vps_notifier.py configure_telegram.py tests/*.py
+python3 -m py_compile common.py monitor.py usage_bot.py vps_notifier.py configure_telegram.py tests/*.py
 python3 -m unittest discover -v
 for f in scripts/*.sh; do bash -n "$f"; done
 shellcheck scripts/*.sh          # if you have it
@@ -28,7 +28,7 @@ CI runs all of this across Python 3.9 through 3.13, plus a scan for secret-shape
 
 ## Where things live
 
-`common.py` is the single source of truth — config validation, cycle projection, formatting, atomic writes, Telegram payloads. Both `monitor.py` (Mac) and `vps_notifier.py` (VPS) import it, so behavior cannot drift between the two halves. **If you change `common.py`, the VPS must be redeployed.**
+`common.py` is the single source of truth — config validation, cycle projection, formatting, atomic writes, Telegram payloads. `monitor.py` (Mac), `usage_bot.py` (Mac), and `vps_notifier.py` (VPS) import it. **If you change `common.py`, the VPS must be redeployed.**
 
 Read `AGENTS.md` for the full invariant list before changing logic.
 
@@ -46,7 +46,7 @@ Every script: `#!/usr/bin/env bash`, `set -euo pipefail`, every path quoted, saf
 
 Anything passed to `ssh` gets re-parsed by the remote login shell — `ssh host cmd a b` sends the single string `cmd a b`. Quote remote arguments with `common.shell_quote()`. A path with a space or a cron `*` will otherwise arrive mangled.
 
-Uninstall scripts must remove only what this project created: the `# codexbar-reset-notifier` cron marker and the `local.codexbar-reset-notifier` LaunchAgent label. Unrelated entries survive untouched.
+Uninstall scripts must remove only what this project created: the `# codexbar-reset-notifier` cron marker and the `local.codexbar-reset-notifier` and `local.codexbar-reset-usage-bot` LaunchAgent labels. Unrelated entries survive untouched.
 
 ## Calling CodexBar
 

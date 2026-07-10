@@ -10,7 +10,7 @@
 python3 -m unittest discover
 ```
 
-- [ ] `python3 -m py_compile common.py monitor.py vps_notifier.py configure_telegram.py tests/*.py`
+- [ ] `python3 -m py_compile common.py monitor.py usage_bot.py vps_notifier.py configure_telegram.py tests/*.py`
 - [ ] `python3 -m unittest discover -v`
 - [ ] `for f in scripts/*.sh; do bash -n "$f"; done`
 - [ ] `python3 monitor.py --validate-config --config config.example.json`

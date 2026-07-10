@@ -12,11 +12,12 @@ Include what you did, what happened, and what you expected. A proof of concept h
 
 The only secrets are a **Telegram bot token** and a **Telegram chat id**, both stored in `.env` (mode `600`, git-ignored) on the Mac and on the VPS.
 
-The project holds **no Claude or Codex credentials**. It reads reset timestamps from the local CodexBar CLI and never authenticates to any AI provider. No prompts, conversations, code, or usage history are transmitted anywhere. No AI or LLM API is ever called.
+The project holds **no Claude or Codex credentials**. It reads reset timestamps from the local CodexBar CLI and never authenticates to any AI provider. No prompts, conversations, or code are transmitted anywhere. Live usage percentages are sent only to the configured Telegram chat after that chat requests `/usage`; they never go to the VPS. No AI or LLM API is ever called.
 
 ## Trust boundaries
 
 - **Mac → VPS**: outbound SSH with `BatchMode=yes`. Only `resetsAt` timestamps and `windowMinutes` integers are sent. Usage percentages and account emails are stripped by `monitor.slim_record()` before anything leaves the machine.
+- **Telegram → Mac → Telegram**: the Mac long-polls for commands and replies only when the incoming chat id exactly matches `TELEGRAM_CHAT_ID`. The reply contains live CodexBar usage but no account identifier.
 - **VPS → Telegram**: outbound HTTPS to `api.telegram.org`.
 - **No inbound ports** are opened on the VPS. Nothing listens.
 - Nothing runs as root. Nothing is written outside `vps_remote_dir` on the VPS or `~/Library/LaunchAgents` on the Mac. `/etc`, SSH server configuration, firewall rules, and system services are never touched.
