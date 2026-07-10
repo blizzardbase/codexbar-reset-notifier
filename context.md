@@ -106,7 +106,7 @@ Verified against the real binary on macOS: `--status` reads live Claude and Code
 
 This repository is the cleaned, publishable version. It was built as a fresh export with new Git history; no commits, `.env`, `data/`, logs, or personal configuration were carried over from the private original.
 
-The release candidate is hosted in the private GitHub repository `blizzardbase/codexbar-reset-notifier`. PR #1 was squash-merged into `main` on July 10, 2026 after the full review loop completed. Keep the repository private until the VPS deployment script has been exercised against a throwaway host and the release checklist is complete.
+The release candidate is hosted in the public GitHub repository `blizzardbase/codexbar-reset-notifier`. PR #1 was squash-merged into `main` on July 10, 2026 after the full review loop completed. The untested first-run VPS transfer is disclosed in the README rather than hidden behind repository visibility.
 
 Completed for release:
 
@@ -131,7 +131,7 @@ The review added these safeguards:
 - Multiple-account errors report only the provider and count, never account identifiers.
 - GitHub Actions does not persist checkout credentials, and documentation contains no credential-shaped examples.
 
-The only pre-public infrastructure check still outstanding is exercising `scripts/deploy_vps.sh` and the cron installer against a throwaway VPS. Keep the GitHub repository private until that succeeds.
+The only infrastructure check still outstanding is exercising `scripts/deploy_vps.sh` and the cron installer against a throwaway VPS. This is a documented first-run risk and remains the next release task.
 
 ## Handoff instructions
 
@@ -147,5 +147,5 @@ The only pre-public infrastructure check still outstanding is exercising `script
   ```
 
 - Tests must never send a real Telegram message or touch the network.
-- The current source of truth is `origin/main` in the private GitHub repository. PR #1 contains the merged public-release implementation and review history.
+- The current source of truth is `origin/main` in the public GitHub repository. PR #1 contains the merged public-release implementation and review history.
 - For approved work, push updates to the feature branch automatically, resolve all actionable CodeRabbit comments, and repeat until every required check is green and no actionable review comments remain. Then merge and sync `main` locally.
