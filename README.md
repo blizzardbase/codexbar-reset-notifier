@@ -224,7 +224,7 @@ Secrets live in `.env`. Everything else lives in `config.json`.
 | --- | --- |
 | `timezone` | IANA timezone used to render reset times, e.g. `America/New_York`. |
 | `providers` | Ordered list. The **first** provider triggers the notification; the **second** is the one counted down to. |
-| `accounts` | Which account to watch per provider, e.g. `{"claude": "work@example.com"}`. Leave `{}` when each provider has a single signed-in account. Required as soon as CodexBar reports more than one. |
+| `accounts` | Which account to watch per provider, e.g. `{"codex": "work@example.com"}`. Leave `{}` unless a provider has several **token accounts**. Run `python3 monitor.py --list-accounts` to see what is selectable. |
 | `codexbar_path` | Full path to the `codexbar` binary, or `null` to search `PATH` and the usual Homebrew locations. |
 | `notification_mode` | `"local"` or `"vps"`. |
 | `vps_host` | SSH host alias or hostname. Required in `vps` mode. |
@@ -250,6 +250,7 @@ Inspect what the system currently believes:
 
 ```bash
 python3 monitor.py --status              # what CodexBar reports right now
+python3 monitor.py --list-accounts       # which accounts are selectable, per provider
 ssh your-vps-host 'python3 /home/your-vps-user/codexbar-reset-notifier/vps_notifier.py --status'
 ```
 
@@ -281,7 +282,8 @@ In practice the Mac syncs every five minutes whenever it is awake, so drift is b
 - **First run is silent.** On a brand-new install the current cycle is adopted without notifying, so you are not messaged about a reset that happened before you installed anything.
 - **Cron granularity.** cron's `*/N` step restarts every hour, so an N that does not divide 60 (seven minutes, say) leaves an irregular gap across each hour boundary. Only divisors of 60 are accepted, plus 60 itself for an hourly check. Anything else is rejected at validation time rather than silently misbehaving.
 - **No `%` in `vps_remote_dir`.** cron reserves it. Rejected at validation time.
-- **One account per provider.** If CodexBar reports several signed-in accounts, you must name the one to watch in `accounts`. The notifier will not guess.
+- **Account selection only covers CodexBar token accounts.** `--account` and `--all-accounts` address the accounts declared in CodexBar's own config file. A provider signed in through OAuth or cookies (Claude, typically) exposes exactly one account and rejects both flags. For those providers the default account is used and no `accounts` entry is needed — or accepted. Run `python3 monitor.py --list-accounts` to see which providers offer a choice.
+- **Multiple records are never silently reduced.** If CodexBar does return several accounts for a provider and none is configured, the notifier stops and lists them rather than monitoring an arbitrary one.
 - **`data/cron.log` grows slowly** and is never rotated. It is tiny, but delete it if you like.
 - **Local-only mode cannot notify while the Mac sleeps.** This is the whole reason VPS mode exists.
 
@@ -314,11 +316,17 @@ ssh your-vps-host 'tail -n 20 /home/your-vps-user/codexbar-reset-notifier/data/c
 `--status` tells you when the Mac last synced and what the VPS expects next.
 
 **`CodexBar reports N accounts for provider ...`.**
-You are signed in to more than one Claude or Codex account. Name the one you want in `config.json`:
-```json
-"accounts": { "claude": "work@example.com" }
+CodexBar sees more than one token account for that provider. List them, then name the one you want:
+```bash
+python3 monitor.py --list-accounts
 ```
-The error message lists the accounts CodexBar can see. Account names stay on your Mac and are never sent to the VPS.
+```json
+"accounts": { "codex": "work@example.com" }
+```
+Account names stay on your Mac and are never sent to the VPS.
+
+**`CodexBar cannot select an account for provider ...: No token accounts configured`.**
+You put a provider in `accounts` that does not support account selection. `--account` only works for CodexBar *token accounts* — accounts declared in CodexBar's config file. A provider signed in through OAuth or cookies has exactly one account. Remove that provider from the `accounts` block.
 
 **Times are in the wrong timezone.**
 `timezone` in `config.json` controls only how times are *displayed*. Change it and redeploy.

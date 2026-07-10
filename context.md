@@ -71,6 +71,27 @@ An external review found three defects in the first public-release cut. All thre
 
 3. **Multiple CodexBar accounts silently reduced to the first.** `fetch_provider()` returned `entries[0]`. It now returns every record, and `select_account_record()` picks the one named by `config.accounts[provider]`, erroring with the list of available accounts when there is more than one and none is configured. Account identifiers never leave the Mac.
 
+### Follow-up: CodexBar was never told to return more than one account
+
+A second review pass noted that selection was implemented after parsing while CodexBar was still invoked without `--all-accounts`, so a secondary account could never actually be selected. That was correct, but the obvious fix — always pass `--all-accounts` — is wrong, and testing against the real CLI (0.37.2) showed why:
+
+```
+$ codexbar usage --provider claude --format json --json-only --all-accounts
+[{"provider":"claude","error":{"message":"No token accounts configured for claude."}}]   # exit 1
+```
+
+`--account` and `--all-accounts` address CodexBar **token accounts**, meaning accounts declared in its config file. A provider signed in through OAuth or cookies — which is how Claude is normally signed in — exposes exactly one account and rejects both flags. Passing `--all-accounts` unconditionally would have broken the trigger provider outright, replacing every notification with an error.
+
+What was actually done:
+
+- `build_codexbar_command()` passes `--account <label>` only when `accounts[provider]` is set, and `--all-accounts` only for the new `monitor.py --list-accounts` discovery command. Neither flag appears in the default call.
+- The invocation now names the documented `usage` subcommand explicitly.
+- `--account` takes a *label*, which need not equal `accountEmail`. When CodexBar has already narrowed the result to one record, that record is trusted rather than re-matched by email. `select_account_record()` arbitrates only when more than one record comes back.
+- Configuring an account on a provider that cannot select one produces an actionable error telling the user to remove it from the `accounts` block.
+- CodexBar reports provider failures as a JSON `error` object on stdout, occasionally with exit 0. `run_codexbar()` checks stdout as well as the exit code.
+
+Verified against the real binary on macOS: `--status` reads live Claude and Codex resets, `--list-accounts` lists Codex's token account and correctly reports Claude as single-account, and a bogus `accounts.claude` exits 1 with the actionable message. The record shape — `usage.accountEmail`, `usage.primary.resetsAt`, `windowMinutes` — matches what the code assumed.
+
 ## Public-release status
 
 This repository is the cleaned, publishable version. It was built as a fresh export with new Git history; no commits, `.env`, `data/`, logs, or personal configuration were carried over from the private original.

@@ -48,6 +48,13 @@ Anything passed to `ssh` gets re-parsed by the remote login shell — `ssh host 
 
 Uninstall scripts must remove only what this project created: the `# codexbar-reset-notifier` cron marker and the `local.codexbar-reset-notifier` LaunchAgent label. Unrelated entries survive untouched.
 
+## Calling CodexBar
+
+`monitor.build_codexbar_command()` owns the argument list, and tests assert it element for element. Two traps:
+
+- `--account` and `--all-accounts` only address CodexBar **token accounts**. A provider signed in with OAuth or cookies rejects them with `No token accounts configured`. Never pass either flag unconditionally — it breaks Claude.
+- CodexBar reports provider failures as a JSON `error` object on **stdout**, sometimes while exiting 0. Check the payload, not just the return code.
+
 ## Commit and PR style
 
 Small, focused commits with a one-line summary and a body explaining *why*. Branch off the default branch; never commit to it directly. Fill in the pull request template.
