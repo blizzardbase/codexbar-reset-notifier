@@ -44,8 +44,8 @@ def resolve_codexbar(config: dict) -> str:
     )
 
 
-def fetch_provider(executable: str, provider: str) -> dict:
-    """Return the first CodexBar record for a provider."""
+def fetch_provider(executable: str, provider: str) -> list:
+    """Return every CodexBar record for a provider, one per signed-in account."""
     try:
         result = subprocess.run(
             [executable, "--provider", provider, "--format", "json", "--json-only"],
@@ -63,9 +63,7 @@ def fetch_provider(executable: str, provider: str) -> dict:
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"codexbar returned invalid JSON for provider {provider}: {exc}") from None
     entries = payload if isinstance(payload, list) else [payload]
-    if not entries:
-        raise RuntimeError(f"codexbar returned no data for provider {provider}")
-    return entries[0]
+    return [entry for entry in entries if isinstance(entry, dict)]
 
 
 def slim_record(entry: dict) -> dict:
@@ -90,11 +88,15 @@ def slim_record(entry: dict) -> dict:
 
 
 def collect_records(config: dict) -> dict:
+    """Read one record per provider, for the configured account."""
     executable = resolve_codexbar(config)
-    return {
-        provider: slim_record(fetch_provider(executable, provider))
-        for provider in config["providers"]
-    }
+    accounts = config.get("accounts") or {}
+    records = {}
+    for provider in config["providers"]:
+        entries = fetch_provider(executable, provider)
+        entry = common.select_account_record(entries, provider, accounts.get(provider))
+        records[provider] = slim_record(entry)
+    return records
 
 
 def sync_to_vps(config: dict, records: dict) -> None:

@@ -1,6 +1,7 @@
 {
   "timezone": "UTC",
   "providers": ["claude", "codex"],
+  "accounts": {},
   "codexbar_path": null,
   "notification_mode": "vps",
   "vps_host": "your-vps-host",

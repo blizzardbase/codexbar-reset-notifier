@@ -44,6 +44,7 @@ NOTIFICATION_MODES = ("local", "vps")
 _REQUIRED_CONFIG = {
     "timezone": str,
     "providers": list,
+    "accounts": dict,
     "codexbar_path": (str, type(None)),
     "notification_mode": str,
     "vps_host": str,
@@ -59,6 +60,11 @@ _POSITIVE_INTS = (
     "vps_check_interval_seconds",
     "stale_data_minutes",
 )
+
+# cron's `*/N` steps restart each hour, so an N that does not divide 60 leaves an
+# irregular gap across every hour boundary (*/7 fires at :56 then :00). Only
+# divisors of 60 are accepted, plus 60 itself for an hourly check.
+CRON_ALLOWED_MINUTES = (1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60)
 
 _FRACTION = re.compile(r"\.(\d+)")
 
@@ -154,6 +160,15 @@ def validate_config(config: dict) -> dict:
     if len(set(providers)) != len(providers):
         raise ConfigError("Config key providers must not contain duplicates.")
 
+    accounts = config["accounts"]
+    for provider, account in accounts.items():
+        if provider not in providers:
+            raise ConfigError(
+                f"Config key accounts names '{provider}', which is not in providers."
+            )
+        if not isinstance(account, str) or not account.strip():
+            raise ConfigError(f"Config key accounts.{provider} must be a non-empty string.")
+
     try:
         ZoneInfo(config["timezone"])
     except (ZoneInfoNotFoundError, ValueError) as exc:
@@ -175,6 +190,10 @@ def validate_config(config: dict) -> dict:
             )
         if not remote_dir.startswith("/"):
             raise ConfigError("Config key vps_remote_dir must be an absolute path.")
+        if "%" in remote_dir:
+            raise ConfigError("Config key vps_remote_dir must not contain '%'; cron reserves it.")
+        # Surfaces a bad interval at setup time rather than at cron-install time.
+        cron_schedule(config)
 
     codexbar_path = config["codexbar_path"]
     if isinstance(codexbar_path, str) and not codexbar_path.strip():
@@ -185,6 +204,77 @@ def validate_config(config: dict) -> dict:
 
 def config_timezone(config: dict) -> ZoneInfo:
     return ZoneInfo(config["timezone"])
+
+
+def cron_schedule(config: dict) -> str:
+    """Turn vps_check_interval_seconds into a cron schedule that fires evenly.
+
+    A `*/N` step restarts at the top of every hour, so an N that does not divide
+    60 produces an irregular gap across the hour boundary. Rather than silently
+    accept that, only divisors of 60 are allowed.
+    """
+    seconds = config["vps_check_interval_seconds"]
+    if seconds % 60:
+        raise ConfigError(
+            "Config key vps_check_interval_seconds must be a whole number of minutes."
+        )
+    minutes = seconds // 60
+    if minutes not in CRON_ALLOWED_MINUTES:
+        allowed = ", ".join(str(m) for m in CRON_ALLOWED_MINUTES)
+        raise ConfigError(
+            f"Config key vps_check_interval_seconds must be one of these minute counts "
+            f"(so cron fires evenly across the hour): {allowed}. "
+            f"Got {minutes} minutes."
+        )
+    if minutes == 1:
+        return "* * * * *"
+    if minutes == 60:
+        return "0 * * * *"
+    return f"*/{minutes} * * * *"
+
+
+def select_account_record(entries: Sequence[dict], provider: str, wanted: Optional[str]) -> dict:
+    """Choose the CodexBar record for the configured account.
+
+    CodexBar may report several signed-in accounts for one provider. Silently
+    taking the first would monitor an arbitrary account, so an explicit choice
+    is required whenever there is more than one.
+    """
+    if not entries:
+        raise ConfigError(f"CodexBar returned no data for provider {provider}.")
+
+    available = [account_identifier(entry) for entry in entries]
+
+    if wanted:
+        for entry, identifier in zip(entries, available):
+            if identifier == wanted:
+                return entry
+        known = ", ".join(i for i in available if i) or "none reported"
+        raise ConfigError(
+            f"Config key accounts.{provider} is '{wanted}', but CodexBar reports: {known}."
+        )
+
+    if len(entries) == 1:
+        return entries[0]
+
+    known = ", ".join(i for i in available if i) or "unnamed accounts"
+    raise ConfigError(
+        f"CodexBar reports {len(entries)} accounts for provider {provider} ({known}). "
+        f'Choose one by setting "accounts": {{"{provider}": "<account>"}} in config.json.'
+    )
+
+
+def account_identifier(entry: dict) -> Optional[str]:
+    """The account label CodexBar reports, if any. Never sent to the VPS."""
+    if not isinstance(entry, dict):
+        return None
+    usage = entry.get("usage")
+    if isinstance(usage, dict):
+        email = usage.get("accountEmail")
+        if isinstance(email, str) and email.strip():
+            return email.strip()
+    account = entry.get("account")
+    return account.strip() if isinstance(account, str) and account.strip() else None
 
 
 def ssh_target(config: dict) -> str:
@@ -476,12 +566,15 @@ def notify(message: str) -> None:
 
 _SHELL_KEYS = (
     "ssh_target",
+    "cron_schedule",
     "vps_remote_dir",
     "notification_mode",
     "mac_sync_interval_seconds",
     "vps_check_interval_seconds",
     "timezone",
 )
+
+_SHELL_COMPUTED = {"ssh_target": ssh_target, "cron_schedule": cron_schedule}
 
 
 def main(argv: Sequence[str]) -> int:
@@ -494,7 +587,8 @@ def main(argv: Sequence[str]) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     key = argv[0]
-    print(ssh_target(config) if key == "ssh_target" else config[key])
+    computed = _SHELL_COMPUTED.get(key)
+    print(computed(config) if computed else config[key])
     return 0
 
 
