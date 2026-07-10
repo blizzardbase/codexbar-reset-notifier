@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# REMOTE_Q is intentionally expanded locally after being shell-quoted by
+# common.shell_quote() for safe use in each remote command.
+# shellcheck disable=SC2029
 # Copy the VPS half of the project to the remote host over SSH.
 # Idempotent: re-running overwrites the same files. No sudo, no system changes,
 # no inbound ports. Everything lands inside config.vps_remote_dir.
