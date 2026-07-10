@@ -104,7 +104,10 @@ grep -rIn --exclude-dir=.git -E '[0-9]{8,10}:[A-Za-z0-9_-]{30,}' .   # bot-token
 - Never commit `.env`, `config.json`, `data/`, logs, or runtime state.
 - Never commit real hostnames, SSH aliases, usernames, email addresses, chat ids, or filesystem paths from a developer's machine.
 - Work on a feature branch; never commit directly to `master` or `main`.
-- Show the staged diff and confirm before any push.
+- Get approval before implementation begins. Once approved, in-scope commits, pushes, PR updates, CodeRabbit fix rounds, and the final merge are pre-authorized.
+- Show and inspect the staged diff before each push. Never force-push without separate explicit approval.
+- Keep fixing and verifying actionable CodeRabbit findings until no comments remain and every required check is green; then merge and sync the local default branch.
+- Before final handoff, update `context.md`, this file, any other affected documentation, and the project Notion page.
 
 ## Public-release standards
 
