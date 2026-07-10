@@ -44,7 +44,6 @@ NOTIFICATION_MODES = ("local", "vps")
 _REQUIRED_CONFIG = {
     "timezone": str,
     "providers": list,
-    "accounts": dict,
     "codexbar_path": (str, type(None)),
     "notification_mode": str,
     "vps_host": str,
@@ -160,15 +159,6 @@ def validate_config(config: dict) -> dict:
     if len(set(providers)) != len(providers):
         raise ConfigError("Config key providers must not contain duplicates.")
 
-    accounts = config["accounts"]
-    for provider, account in accounts.items():
-        if provider not in providers:
-            raise ConfigError(
-                f"Config key accounts names '{provider}', which is not in providers."
-            )
-        if not isinstance(account, str) or not account.strip():
-            raise ConfigError(f"Config key accounts.{provider} must be a non-empty string.")
-
     try:
         ZoneInfo(config["timezone"])
     except (ZoneInfoNotFoundError, ValueError) as exc:
@@ -233,34 +223,23 @@ def cron_schedule(config: dict) -> str:
     return f"*/{minutes} * * * *"
 
 
-def select_account_record(entries: Sequence[dict], provider: str, wanted: Optional[str]) -> dict:
-    """Choose the CodexBar record for the configured account.
+def require_single_record(entries: Sequence[dict], provider: str) -> dict:
+    """Return the provider's only record, refusing to guess when there are several.
 
-    CodexBar may report several signed-in accounts for one provider. Silently
-    taking the first would monitor an arbitrary account, so an explicit choice
-    is required whenever there is more than one.
+    CodexBar exposes one account per provider for Claude and Codex, and offers
+    no working way to select among several (see build_codexbar_command). Rather
+    than silently monitoring an arbitrary account, stop and say so.
     """
     if not entries:
         raise ConfigError(f"CodexBar returned no data for provider {provider}.")
-
-    available = [account_identifier(entry) for entry in entries]
-
-    if wanted:
-        for entry, identifier in zip(entries, available):
-            if identifier == wanted:
-                return entry
-        known = ", ".join(i for i in available if i) or "none reported"
-        raise ConfigError(
-            f"Config key accounts.{provider} is '{wanted}', but CodexBar reports: {known}."
-        )
-
     if len(entries) == 1:
         return entries[0]
 
-    known = ", ".join(i for i in available if i) or "unnamed accounts"
+    known = ", ".join(i for i in (account_identifier(e) for e in entries) if i) or "unnamed accounts"
     raise ConfigError(
-        f"CodexBar reports {len(entries)} accounts for provider {provider} ({known}). "
-        f'Choose one by setting "accounts": {{"{provider}": "<account>"}} in config.json.'
+        f"CodexBar reports {len(entries)} accounts for provider {provider} ({known}), and this "
+        f"release cannot choose between them. Sign out of the extra accounts in CodexBar, or "
+        f"watch a single account. See 'Known limitations' in the README."
     )
 
 
