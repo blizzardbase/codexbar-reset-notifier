@@ -117,6 +117,22 @@ Completed for release:
 5. The repository is free of tokens, chat ids, real hostnames, usernames, and personal paths.
 6. The offline-projection assumption is documented in the README, AGENTS.md, and here.
 
+### GitHub review hardening
+
+PR #1 completed four CodeRabbit passes. The release candidate now has 151 passing tests across Python 3.9–3.13, clean Ruff and ShellCheck results, a passing secret scan, and no unresolved review threads.
+
+The review added these safeguards:
+
+- VPS checks take an inter-process lock across state read, reset evaluation, Telegram delivery, and state persistence, preventing overlapping cron runs from sending the same reset twice.
+- `.env` updates preserve existing structure and use a mode-`600` temporary file plus atomic replacement; an interrupted replacement leaves the original file unchanged.
+- VPS schedule ingestion validates reset timestamps and interval values before persistence.
+- Remote deployment paths reject shell and cron metacharacters, and installed cron commands quote paths for their later shell parse.
+- Future reset anchors cannot be mistaken for completed resets, and unavailable schedules now produce an explicit warning without sending or mutating state.
+- Multiple-account errors report only the provider and count, never account identifiers.
+- GitHub Actions does not persist checkout credentials, and documentation contains no credential-shaped examples.
+
+The only pre-public infrastructure check still outstanding is exercising `scripts/deploy_vps.sh` and the cron installer against a throwaway VPS. Keep the GitHub repository private until that succeeds.
+
 ## Handoff instructions
 
 - Read `AGENTS.md` before touching code. It records the invariants (no AI calls, no hard-coded intervals, no secrets outside `.env`, no inbound ports, idempotent scripts).
