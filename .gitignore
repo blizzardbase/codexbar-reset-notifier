@@ -1,5 +1,17 @@
 # Secrets
 .env
+.env.*
+!.env.example
+*.session
+*secret*
+*credential*
+*token*
+*apikey*
+*.pem
+*.key
+MEMORY.md
+USER.md
+memory/
 
 # Local, machine-specific configuration
 config.json
