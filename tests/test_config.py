@@ -31,7 +31,7 @@ class ExampleConfigTests(unittest.TestCase):
 
 class RequiredKeyTests(unittest.TestCase):
     def test_every_key_is_required(self):
-        for key in ("timezone", "providers", "notification_mode", "vps_host", "stale_data_minutes"):
+        for key in ("timezone", "providers", "accounts", "notification_mode", "vps_host", "stale_data_minutes"):
             config = base_config()
             del config[key]
             with self.assertRaises(ConfigError, msg=key) as ctx:
@@ -117,6 +117,135 @@ class NotificationModeTests(unittest.TestCase):
             base_config(notification_mode="local", vps_host="", vps_user="", vps_remote_dir="")
         )
         self.assertEqual(config["notification_mode"], "local")
+
+
+class CronScheduleTests(unittest.TestCase):
+    """cron's */N restarts each hour, so N must divide 60 to fire evenly."""
+
+    def schedule(self, minutes):
+        return common.cron_schedule(base_config(vps_check_interval_seconds=minutes * 60))
+
+    def test_divisors_of_sixty_are_accepted(self):
+        self.assertEqual(self.schedule(1), "* * * * *")
+        self.assertEqual(self.schedule(5), "*/5 * * * *")
+        self.assertEqual(self.schedule(15), "*/15 * * * *")
+        self.assertEqual(self.schedule(30), "*/30 * * * *")
+
+    def test_sixty_minutes_becomes_an_hourly_schedule_not_a_step(self):
+        # "*/60 * * * *" would never fire; cron minutes only reach 59.
+        self.assertEqual(self.schedule(60), "0 * * * *")
+
+    def test_non_divisors_are_rejected(self):
+        for minutes in (7, 8, 9, 11, 13, 14, 25, 45, 59):
+            with self.assertRaises(ConfigError, msg=f"{minutes} minutes"):
+                self.schedule(minutes)
+
+    def test_rejection_names_the_allowed_values(self):
+        with self.assertRaises(ConfigError) as ctx:
+            self.schedule(7)
+        self.assertIn("vps_check_interval_seconds", str(ctx.exception))
+        self.assertIn("30", str(ctx.exception))
+
+    def test_partial_minutes_are_rejected(self):
+        with self.assertRaises(ConfigError):
+            common.cron_schedule(base_config(vps_check_interval_seconds=90))
+
+    def test_every_allowed_minute_yields_an_evenly_dividing_schedule(self):
+        for minutes in common.CRON_ALLOWED_MINUTES:
+            self.assertEqual(60 % minutes, 0, f"{minutes} does not divide 60")
+            self.schedule(minutes)
+
+    def test_validation_rejects_a_bad_interval_in_vps_mode(self):
+        with self.assertRaises(ConfigError):
+            common.validate_config(base_config(notification_mode="vps", vps_check_interval_seconds=420))
+
+
+class RemoteDirTests(unittest.TestCase):
+    def test_percent_is_rejected_because_cron_reserves_it(self):
+        with self.assertRaises(ConfigError):
+            common.validate_config(base_config(vps_remote_dir="/home/u/50%off"))
+
+    def test_spaces_are_allowed_and_quoted_for_the_remote_shell(self):
+        config = common.validate_config(base_config(vps_remote_dir="/home/u/my notifier"))
+        self.assertEqual(common.shell_quote(config["vps_remote_dir"]), "'/home/u/my notifier'")
+
+
+class AccountsConfigTests(unittest.TestCase):
+    def test_empty_accounts_is_valid(self):
+        self.assertEqual(common.validate_config(base_config(accounts={}))["accounts"], {})
+
+    def test_accounts_may_name_a_configured_provider(self):
+        config = common.validate_config(base_config(accounts={"claude": "work@example.com"}))
+        self.assertEqual(config["accounts"]["claude"], "work@example.com")
+
+    def test_accounts_must_not_name_an_unknown_provider(self):
+        with self.assertRaises(ConfigError) as ctx:
+            common.validate_config(base_config(accounts={"gemini": "a@b.c"}))
+        self.assertIn("gemini", str(ctx.exception))
+
+    def test_account_value_must_be_a_non_empty_string(self):
+        with self.assertRaises(ConfigError):
+            common.validate_config(base_config(accounts={"claude": ""}))
+        with self.assertRaises(ConfigError):
+            common.validate_config(base_config(accounts={"claude": 7}))
+
+    def test_accounts_must_be_an_object(self):
+        with self.assertRaises(ConfigError):
+            common.validate_config(base_config(accounts=["claude"]))
+
+
+class AccountSelectionTests(unittest.TestCase):
+    """CodexBar may report several signed-in accounts; never guess which one."""
+
+    WORK = {"usage": {"accountEmail": "work@example.com", "primary": {}}}
+    PERSONAL = {"usage": {"accountEmail": "personal@example.com", "primary": {}}}
+    UNNAMED = {"usage": {"primary": {}}}
+
+    def test_single_account_is_used_without_configuration(self):
+        self.assertIs(common.select_account_record([self.WORK], "claude", None), self.WORK)
+
+    def test_single_unnamed_account_is_used_without_configuration(self):
+        self.assertIs(common.select_account_record([self.UNNAMED], "claude", None), self.UNNAMED)
+
+    def test_multiple_accounts_without_configuration_are_rejected(self):
+        with self.assertRaises(ConfigError) as ctx:
+            common.select_account_record([self.WORK, self.PERSONAL], "claude", None)
+        message = str(ctx.exception)
+        # The error must name both accounts and tell the user how to choose.
+        self.assertIn("work@example.com", message)
+        self.assertIn("personal@example.com", message)
+        self.assertIn("accounts", message)
+
+    def test_configured_account_selects_the_right_record(self):
+        chosen = common.select_account_record(
+            [self.WORK, self.PERSONAL], "claude", "personal@example.com"
+        )
+        self.assertIs(chosen, self.PERSONAL)
+
+    def test_second_account_is_never_silently_first(self):
+        chosen = common.select_account_record([self.WORK, self.PERSONAL], "claude", "work@example.com")
+        self.assertIs(chosen, self.WORK)
+        self.assertIsNot(
+            common.select_account_record([self.PERSONAL, self.WORK], "claude", "work@example.com"),
+            self.PERSONAL,
+        )
+
+    def test_unknown_configured_account_is_rejected(self):
+        with self.assertRaises(ConfigError) as ctx:
+            common.select_account_record([self.WORK], "claude", "ghost@example.com")
+        self.assertIn("ghost@example.com", str(ctx.exception))
+        self.assertIn("work@example.com", str(ctx.exception))
+
+    def test_no_entries_is_rejected(self):
+        with self.assertRaises(ConfigError):
+            common.select_account_record([], "claude", None)
+
+    def test_account_identifier_prefers_email_then_account(self):
+        self.assertEqual(common.account_identifier(self.WORK), "work@example.com")
+        self.assertEqual(common.account_identifier({"account": "team"}), "team")
+        self.assertIsNone(common.account_identifier(self.UNNAMED))
+        self.assertIsNone(common.account_identifier({"account": "  "}))
+        self.assertIsNone(common.account_identifier(None))
 
 
 class SshTargetTests(unittest.TestCase):
