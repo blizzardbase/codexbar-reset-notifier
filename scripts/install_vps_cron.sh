@@ -11,17 +11,18 @@ python3 "$ROOT/monitor.py" --validate-config >/dev/null
 
 TARGET="$(python3 "$ROOT/common.py" ssh_target)"
 REMOTE_DIR="$(python3 "$ROOT/common.py" vps_remote_dir)"
-CHECK_SECONDS="$(python3 "$ROOT/common.py" vps_check_interval_seconds)"
+# Rejects intervals that would not fire evenly across the hour boundary.
+SCHEDULE="$(python3 "$ROOT/common.py" cron_schedule)"
 
-if [ $((CHECK_SECONDS % 60)) -ne 0 ] || [ "$CHECK_SECONDS" -lt 60 ] || [ "$CHECK_SECONDS" -gt 3540 ]; then
-  echo "ERROR: vps_check_interval_seconds must be a whole number of minutes between 60 and 3540." >&2
-  exit 1
-fi
+# ssh concatenates its command arguments into a single string and hands it to the
+# remote login shell, which then word-splits and glob-expands it. Quote each
+# argument for that remote shell, or a path with spaces and a schedule
+# containing '*' will arrive mangled.
+REMOTE_ARGS="$(python3 -c \
+  'import sys, common; print(" ".join(common.shell_quote(a) for a in sys.argv[1:]))' \
+  "$REMOTE_DIR" "$SCHEDULE")"
 
-MINUTES=$((CHECK_SECONDS / 60))
-if [ "$MINUTES" -eq 1 ]; then SCHEDULE="* * * * *"; else SCHEDULE="*/$MINUTES * * * *"; fi
-
-ssh -o BatchMode=yes -o ConnectTimeout=10 "$TARGET" bash -s -- "$REMOTE_DIR" "$SCHEDULE" <<'REMOTE'
+ssh -o BatchMode=yes -o ConnectTimeout=10 "$TARGET" "bash -s -- $REMOTE_ARGS" <<'REMOTE'
 set -euo pipefail
 REMOTE_DIR="$1"
 SCHEDULE="$2"
