@@ -20,12 +20,15 @@ CodexBar already exposes the exact reset timestamps as structured JSON, so no sc
 
 **No usage percentages in the message.** Percentages read from CodexBar are correct only at sync time. Projected forward on the VPS they would be stale and misleading, so they are stripped before they ever leave the Mac.
 
+**Live usage is request-only and Mac-local.** `/usage` reads CodexBar at the moment the command arrives and replies only in the configured Telegram chat. The percentages never enter the VPS schedule; if the Mac is unavailable, the command cannot answer.
+
 **No hard-coded intervals.** Both providers currently report 300-minute session windows, but the code never assumes it. `windowMinutes` from the provider drives every projection. If a provider stops reporting it and the anchor has passed, the window is declared unavailable rather than guessed.
 
 ## Current architecture
 
 - `common.py` holds every rule: config validation, cycle projection, message formatting, atomic JSON writes, Telegram payload construction. Both halves import it, so behavior cannot diverge.
 - `monitor.py` runs on the Mac under a LaunchAgent every `mac_sync_interval_seconds` (default 300). It reads CodexBar, reduces each record to `resetsAt` + `windowMinutes`, and ships that over SSH.
+- `usage_bot.py` runs under a second Mac LaunchAgent, long-polls Telegram, accepts `/usage` only from `TELEGRAM_CHAT_ID`, and formats fresh CodexBar session and weekly usage.
 - `vps_notifier.py` runs on the VPS under cron every `vps_check_interval_seconds` (default 60). It projects both cycles forward, decides whether a reset just happened, sends at most one Telegram DM, and records the reset.
 - Deduplication keys on the ISO timestamp of the trigger provider's last reset. The same reset can never be announced twice.
 - `evaluate_reset()` returns one of `send`, `seed`, `duplicate`, `expired`, `unavailable`. It is pure; only the caller writes state.
@@ -52,12 +55,13 @@ Every value passes `common.validate_config()` before any install, deploy, or run
 - **One account per provider.** CodexBar offers no working account selection for Claude or Codex, so each provider's default account is watched. If several records ever come back, the notifier stops without logging their identifiers. Multi-account support is out of scope.
 - **`data/cron.log` is never rotated.** It grows slowly and can be deleted freely.
 - **Local-only mode cannot notify while the Mac sleeps.** Documented, not fixable without the VPS.
+- **Live `/usage` is Mac-dependent.** Scheduled VPS alerts continue offline, but an on-demand usage query needs the Mac awake, online, and able to run CodexBar.
 
 ## Maintenance
 
 - After changing `common.py`, redeploy the VPS: `./scripts/deploy_vps.sh`. The Mac and VPS must run the same projection code.
 - After changing `config.json`, re-run `./scripts/deploy_vps.sh` and, if intervals changed, `./scripts/install_vps_cron.sh` and `./scripts/install_mac.sh`.
-- If notifications stop, check in this order: `./scripts/test_notification.sh`, the LaunchAgent (`launchctl print`), `data/monitor-error.log`, the VPS cron entry, `vps_notifier.py --status`, `data/cron.log`.
+- If notifications stop, check in this order: `./scripts/test_notification.sh`, both LaunchAgents (`launchctl print`), `data/monitor-error.log`, `data/usage-bot-error.log`, the VPS cron entry, `vps_notifier.py --status`, `data/cron.log`.
 - Telegram notification rules are device-specific. If private-chat notifications are globally muted on the phone, the bot chat must be an explicit exception.
 - If a provider's window length changes, no code change is needed — the next Mac sync carries the new `windowMinutes`.
 
@@ -139,7 +143,7 @@ The only infrastructure check still outstanding is exercising `scripts/deploy_vp
 - Run the full verification set before and after any change:
 
   ```bash
-  python3 -m py_compile common.py monitor.py vps_notifier.py configure_telegram.py
+python3 -m py_compile common.py monitor.py usage_bot.py vps_notifier.py configure_telegram.py
   python3 -m unittest discover -v
   for f in scripts/*.sh; do bash -n "$f"; done
   python3 monitor.py --validate-config --config config.example.json

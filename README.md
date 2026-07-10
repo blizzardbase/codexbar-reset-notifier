@@ -2,7 +2,7 @@
 
 Get one private Telegram message the moment your Claude session limit resets — even when your Mac is asleep or switched off.
 
-The message also tells you how many minutes until Codex resets, and when both weekly limits roll over.
+The message also tells you how many minutes until Codex resets, and when both weekly limits roll over. While your Mac is awake, send `/usage` to the bot for a live Claude and Codex usage snapshot.
 
 **No AI tokens are consumed.** This project never calls Claude, Codex, an LLM, or any paid AI API. It is plain Python, SSH, cron, the CodexBar CLI, and the Telegram Bot API.
 
@@ -20,6 +20,20 @@ Codex weekly reset: 4:00 AM, Fri New York time (6 days 19 hours)
 ```
 
 Every number is calculated fresh. There is no hard-coded gap between Claude and Codex, no 15-minute warning, no separate Codex message, and no usage percentages. One reset, one message.
+
+When you want a live snapshot, send `/usage` in the configured Telegram chat:
+
+```text
+Live CodexBar usage — 12:00 PM, Fri New York time
+
+Claude session: 33% left; resets 3:18 PM, Fri (3h 18m)
+Claude weekly: 81% left; resets 8:00 PM, Sun (2 days 8 hours)
+
+Codex session: 67% left; resets 3:28 PM, Fri (3h 28m)
+Codex weekly: 74% left; resets 4:00 AM, Fri (6 days 16 hours)
+```
+
+The command also accepts `/usage bot` and Telegram's `/usage@your_bot_username` form. It replies only in the configured chat and consumes no AI tokens.
 
 ---
 
@@ -45,8 +59,11 @@ You can skip the VPS entirely (see **Local-only mode**), but then notifications 
 │        ▼                 │   (no credentials, no usage %)   │    projects cycles     │
 │  monitor.py              │                                  │    dedupes resets      │
 │    every 5 min           │                                  │    every 1 min (cron)  │
-│    (LaunchAgent)         │                                  │          │             │
-└──────────────────────────┘                                  └──────────┼─────────────┘
+│  usage_bot.py            │                                  │          │             │
+│    answers /usage        │                                  │          │             │
+└────────────┬─────────────┘                                  └──────────┼─────────────┘
+             │                                                            │
+             └──────────────────────► Telegram ◄───────────────────────────┘
                                                                          ▼
                                                                   Telegram DM
 ```
@@ -56,7 +73,8 @@ You can skip the VPS entirely (see **Local-only mode**), but then notifications 
 3. It sends only the reset anchors and window lengths to the VPS over SSH.
 4. VPS cron runs `vps_notifier.py --check` every minute.
 5. At each Claude reset the VPS sends one Telegram DM and records it, so it is never sent twice.
-6. The next Mac sync overwrites the anchors with live data, correcting any drift.
+6. A second Mac LaunchAgent listens for `/usage`, reads CodexBar live, and replies in the configured chat.
+7. The next Mac sync overwrites the anchors with live data, correcting any drift.
 
 ---
 
@@ -64,7 +82,8 @@ You can skip the VPS entirely (see **Local-only mode**), but then notifications 
 
 - Your Claude and Codex credentials never leave your Mac. The VPS has none.
 - The VPS receives only `resetsAt` timestamps and `windowMinutes` integers.
-- Usage percentages, account emails, prompts, conversations, and code are never sent anywhere.
+- Usage percentages never go to the VPS. They are sent only to your configured Telegram chat when you explicitly request `/usage`.
+- Account emails, prompts, conversations, and code are never transmitted.
 - Telegram credentials live only in `.env`, which is git-ignored on both machines.
 - The VPS opens no inbound ports. All traffic is outbound: your Mac connects to it over SSH; it connects to Telegram over HTTPS.
 - Nothing is sent to an AI provider, and no model tokens are spent.
@@ -77,7 +96,7 @@ You can skip the VPS entirely (see **Local-only mode**), but then notifications 
 - Claude and/or Codex signed in inside CodexBar
 - **Python 3.9 or newer** on the Mac and on the VPS (no third-party packages)
 - For VPS-backed mode: any always-on Linux server you can reach with `ssh` using key authentication
-- A **Telegram bot** and a private chat with it
+- A **Telegram bot** and a private or group chat with it
 
 On a minimal Linux VPS, make sure the system `tzdata` package is present — Python's `zoneinfo` needs it.
 
@@ -132,6 +151,12 @@ python3 configure_telegram.py
 
 It writes `TELEGRAM_CHAT_ID` into `.env` for you and prints nothing sensitive.
 
+To use a group instead, add the bot to the group, send `/start` there, and run:
+
+```bash
+python3 configure_telegram.py --group
+```
+
 Finally, open `config.json` and set at least your `timezone` (an [IANA name](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) such as `America/New_York` or `Europe/London`).
 
 Check the configuration is valid at any time:
@@ -139,6 +164,18 @@ Check the configuration is valid at any time:
 ```bash
 python3 monitor.py --validate-config
 ```
+
+### Live usage on demand
+
+`./scripts/install_mac.sh` installs two per-user LaunchAgents: the scheduled monitor and the Telegram command listener. With the Mac awake and online, send any of these in the configured chat:
+
+```text
+/usage
+/usage bot
+/usage@your_bot_username
+```
+
+The bot reads CodexBar at request time and returns current session and weekly percentages, reset times, and countdowns. It ignores commands from every chat except `TELEGRAM_CHAT_ID`. The VPS is not involved because it deliberately does not receive usage percentages.
 
 ---
 
@@ -217,7 +254,7 @@ Secrets live in `.env`. Everything else lives in `config.json`.
 | Key | Meaning |
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | The token from BotFather. |
-| `TELEGRAM_CHAT_ID` | Your private chat id. Filled in by `configure_telegram.py`. |
+| `TELEGRAM_CHAT_ID` | Your authorized private or group chat id. Filled in by `configure_telegram.py`. |
 
 ### `config.json`
 
@@ -284,6 +321,8 @@ In practice the Mac syncs every five minutes whenever it is awake, so drift is b
 - **One account per provider.** CodexBar exposes a single account for Claude and for Codex, and offers no working way to pick among several: `--account`, `--account-index`, and `--all-accounts` all address CodexBar *token accounts*, which neither provider has. Claude answers `No token accounts configured for claude.` and Codex answers `codex does not support token accounts.` So this release watches each provider's default account. If CodexBar ever returns more than one record, the notifier stops and names them rather than monitoring an arbitrary one. Multi-account support is out of scope until CodexBar offers selection for these providers.
 - **`data/cron.log` grows slowly** and is never rotated. It is tiny, but delete it if you like.
 - **Local-only mode cannot notify while the Mac sleeps.** This is the whole reason VPS mode exists.
+- **`/usage` requires the Mac.** The command reads CodexBar locally, so it cannot answer while the Mac is asleep, switched off, or offline. Scheduled reset alerts continue from the VPS as usual.
+- **Use a dedicated Telegram bot.** The command listener uses Telegram long polling. A bot cannot use `getUpdates` while it has an active webhook, and another program consuming updates from the same bot can steal commands.
 
 ---
 
@@ -298,7 +337,9 @@ Set `codexbar_path` in `config.json` to the binary's full path. Under a LaunchAg
 **The LaunchAgent is not running.**
 ```bash
 launchctl print "gui/$UID/local.codexbar-reset-notifier" | grep -E 'state|last exit'
+launchctl print "gui/$UID/local.codexbar-reset-usage-bot" | grep -E 'state|last exit'
 tail -n 20 data/monitor-error.log
+tail -n 20 data/usage-bot-error.log
 ```
 If `python3` on your Mac comes from a version manager (pyenv, asdf), its path can change. Re-run `./scripts/install_mac.sh` after switching Python versions.
 
@@ -333,7 +374,7 @@ Expired credentials usually show as an authorization error; open CodexBar and si
 ```bash
 git pull
 ./scripts/deploy_vps.sh          # push the new VPS half
-./scripts/install_mac.sh         # re-render and restart the LaunchAgent
+./scripts/install_mac.sh         # re-render and restart both LaunchAgents
 ```
 
 Both scripts are idempotent. Your `.env`, `config.json`, and `data/` are untouched by `git pull` because they are ignored.
@@ -344,7 +385,7 @@ Both scripts are idempotent. Your `.env`, `config.json`, and `data/` are untouch
 
 ```bash
 ./scripts/uninstall_vps_cron.sh   # removes only this project's cron entry
-./scripts/uninstall_mac.sh        # removes only this project's LaunchAgent
+./scripts/uninstall_mac.sh        # removes only this project's LaunchAgents
 ```
 
 Neither script touches unrelated cron entries, other LaunchAgents, or system services. To finish, delete `data/`, `.env`, and the remote directory yourself.
