@@ -1,0 +1,23 @@
+# Secrets
+.env
+
+# Local, machine-specific configuration
+config.json
+
+# Runtime state, projected schedules, and logs
+data/
+*.tmp
+*.log
+
+# Rendered LaunchAgent
+*.plist
+!*.plist.template
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# macOS
+.DS_Store

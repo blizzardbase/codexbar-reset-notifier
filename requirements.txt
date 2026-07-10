@@ -1,0 +1,3 @@
+# This project uses the Python standard library only.
+# Python 3.9 or newer is required (zoneinfo).
+# On a minimal Linux VPS, ensure the system tzdata package is installed.

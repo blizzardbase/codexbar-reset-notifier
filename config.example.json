@@ -1,0 +1,12 @@
+{
+  "timezone": "UTC",
+  "providers": ["claude", "codex"],
+  "codexbar_path": null,
+  "notification_mode": "vps",
+  "vps_host": "your-vps-host",
+  "vps_user": "your-vps-user",
+  "vps_remote_dir": "/home/your-vps-user/codexbar-reset-notifier",
+  "mac_sync_interval_seconds": 300,
+  "vps_check_interval_seconds": 60,
+  "stale_data_minutes": 30
+}
