@@ -31,7 +31,7 @@ class ExampleConfigTests(unittest.TestCase):
 
 class RequiredKeyTests(unittest.TestCase):
     def test_every_key_is_required(self):
-        for key in ("timezone", "providers", "accounts", "notification_mode", "vps_host", "stale_data_minutes"):
+        for key in ("timezone", "providers", "notification_mode", "vps_host", "stale_data_minutes"):
             config = base_config()
             del config[key]
             with self.assertRaises(ConfigError, msg=key) as ctx:
@@ -170,75 +170,34 @@ class RemoteDirTests(unittest.TestCase):
         self.assertEqual(common.shell_quote(config["vps_remote_dir"]), "'/home/u/my notifier'")
 
 
-class AccountsConfigTests(unittest.TestCase):
-    def test_empty_accounts_is_valid(self):
-        self.assertEqual(common.validate_config(base_config(accounts={}))["accounts"], {})
-
-    def test_accounts_may_name_a_configured_provider(self):
-        config = common.validate_config(base_config(accounts={"claude": "work@example.com"}))
-        self.assertEqual(config["accounts"]["claude"], "work@example.com")
-
-    def test_accounts_must_not_name_an_unknown_provider(self):
-        with self.assertRaises(ConfigError) as ctx:
-            common.validate_config(base_config(accounts={"gemini": "a@b.c"}))
-        self.assertIn("gemini", str(ctx.exception))
-
-    def test_account_value_must_be_a_non_empty_string(self):
-        with self.assertRaises(ConfigError):
-            common.validate_config(base_config(accounts={"claude": ""}))
-        with self.assertRaises(ConfigError):
-            common.validate_config(base_config(accounts={"claude": 7}))
-
-    def test_accounts_must_be_an_object(self):
-        with self.assertRaises(ConfigError):
-            common.validate_config(base_config(accounts=["claude"]))
-
-
-class AccountSelectionTests(unittest.TestCase):
-    """CodexBar may report several signed-in accounts; never guess which one."""
+class SingleRecordTests(unittest.TestCase):
+    """CodexBar offers no working account selection for Claude or Codex."""
 
     WORK = {"usage": {"accountEmail": "work@example.com", "primary": {}}}
     PERSONAL = {"usage": {"accountEmail": "personal@example.com", "primary": {}}}
     UNNAMED = {"usage": {"primary": {}}}
 
-    def test_single_account_is_used_without_configuration(self):
-        self.assertIs(common.select_account_record([self.WORK], "claude", None), self.WORK)
+    def test_sole_record_is_returned(self):
+        self.assertIs(common.require_single_record([self.WORK], "claude"), self.WORK)
 
-    def test_single_unnamed_account_is_used_without_configuration(self):
-        self.assertIs(common.select_account_record([self.UNNAMED], "claude", None), self.UNNAMED)
+    def test_sole_unnamed_record_is_returned(self):
+        self.assertIs(common.require_single_record([self.UNNAMED], "claude"), self.UNNAMED)
 
-    def test_multiple_accounts_without_configuration_are_rejected(self):
+    def test_several_records_are_never_reduced_to_the_first(self):
         with self.assertRaises(ConfigError) as ctx:
-            common.select_account_record([self.WORK, self.PERSONAL], "claude", None)
+            common.require_single_record([self.WORK, self.PERSONAL], "claude")
         message = str(ctx.exception)
-        # The error must name both accounts and tell the user how to choose.
         self.assertIn("work@example.com", message)
         self.assertIn("personal@example.com", message)
-        self.assertIn("accounts", message)
+        self.assertIn("cannot choose between them", message)
 
-    def test_configured_account_selects_the_right_record(self):
-        chosen = common.select_account_record(
-            [self.WORK, self.PERSONAL], "claude", "personal@example.com"
-        )
-        self.assertIs(chosen, self.PERSONAL)
-
-    def test_second_account_is_never_silently_first(self):
-        chosen = common.select_account_record([self.WORK, self.PERSONAL], "claude", "work@example.com")
-        self.assertIs(chosen, self.WORK)
-        self.assertIsNot(
-            common.select_account_record([self.PERSONAL, self.WORK], "claude", "work@example.com"),
-            self.PERSONAL,
-        )
-
-    def test_unknown_configured_account_is_rejected(self):
-        with self.assertRaises(ConfigError) as ctx:
-            common.select_account_record([self.WORK], "claude", "ghost@example.com")
-        self.assertIn("ghost@example.com", str(ctx.exception))
-        self.assertIn("work@example.com", str(ctx.exception))
-
-    def test_no_entries_is_rejected(self):
+    def test_several_unnamed_records_still_refuse_to_guess(self):
         with self.assertRaises(ConfigError):
-            common.select_account_record([], "claude", None)
+            common.require_single_record([self.UNNAMED, self.UNNAMED], "codex")
+
+    def test_no_records_is_rejected(self):
+        with self.assertRaises(ConfigError):
+            common.require_single_record([], "claude")
 
     def test_account_identifier_prefers_email_then_account(self):
         self.assertEqual(common.account_identifier(self.WORK), "work@example.com")
@@ -246,6 +205,16 @@ class AccountSelectionTests(unittest.TestCase):
         self.assertIsNone(common.account_identifier(self.UNNAMED))
         self.assertIsNone(common.account_identifier({"account": "  "}))
         self.assertIsNone(common.account_identifier(None))
+
+
+class NoAccountsKeyTests(unittest.TestCase):
+    def test_accounts_is_not_a_config_key(self):
+        self.assertNotIn("accounts", json.loads(EXAMPLE.read_text()))
+
+    def test_an_unknown_extra_key_is_ignored_rather_than_fatal(self):
+        # Users upgrading from a build that had "accounts" keep working.
+        config = common.validate_config(base_config(accounts={"claude": "x@y.z"}))
+        self.assertEqual(config["notification_mode"], "vps")
 
 
 class SshTargetTests(unittest.TestCase):
