@@ -31,7 +31,9 @@ MARKER="# codexbar-reset-notifier"
 PYTHON_BIN="$(command -v python3)"
 mkdir -p "$REMOTE_DIR/data"
 
-LINE="$SCHEDULE cd \"$REMOTE_DIR\" && \"$PYTHON_BIN\" \"$REMOTE_DIR/vps_notifier.py\" --check >> \"$REMOTE_DIR/data/cron.log\" 2>&1 $MARKER"
+QUOTED_DIR="$(printf '%q' "$REMOTE_DIR")"
+QUOTED_PYTHON="$(printf '%q' "$PYTHON_BIN")"
+LINE="$SCHEDULE cd $QUOTED_DIR && $QUOTED_PYTHON $QUOTED_DIR/vps_notifier.py --check >> $QUOTED_DIR/data/cron.log 2>&1 $MARKER"
 
 EXISTING="$(crontab -l 2>/dev/null || true)"
 # Drop only our own marked lines, keep every other entry byte for byte.

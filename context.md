@@ -49,7 +49,7 @@ Every value passes `common.validate_config()` before any install, deploy, or run
 - **Silent first run.** A fresh install adopts the current cycle without notifying, so the user is not messaged about a reset that predates the install.
 - **Weekly line requires an interval.** Without `windowMinutes` on the weekly window, the line survives until its anchor passes, then disappears.
 - **Cron granularity.** The VPS check interval must be a divisor of 60 minutes, or 60 itself. A `*/7` step would fire at :49, :56, then :00 — an irregular gap every hour. Rejected at validation time.
-- **One account per provider.** CodexBar offers no working account selection for Claude or Codex, so each provider's default account is watched. If several records ever come back, the notifier stops and names them rather than guessing. Multi-account support is out of scope.
+- **One account per provider.** CodexBar offers no working account selection for Claude or Codex, so each provider's default account is watched. If several records ever come back, the notifier stops without logging their identifiers. Multi-account support is out of scope.
 - **`data/cron.log` is never rotated.** It grows slowly and can be deleted freely.
 - **Local-only mode cannot notify while the Mac sleeps.** Documented, not fixable without the VPS.
 
@@ -69,7 +69,7 @@ An external review found three defects in the first public-release cut. All thre
 
 2. **Cron intervals that do not divide 60.** `*/7` restarts at the top of each hour, firing at :49, :56, then :00. `common.cron_schedule()` now accepts only divisors of 60 (plus 60 itself, rendered `0 * * * *` rather than the never-firing `*/60`), and `validate_config()` calls it so a bad interval fails at setup.
 
-3. **Multiple CodexBar accounts silently reduced to the first.** `fetch_provider()` returned `entries[0]`. It now returns every record, and `common.require_single_record()` returns the sole record or stops and names the accounts it saw. It never guesses.
+3. **Multiple CodexBar accounts silently reduced to the first.** `fetch_provider()` returned `entries[0]`. It now returns every record, and `common.require_single_record()` returns the sole record or stops without exposing account identifiers. It never guesses.
 
 ### Follow-up: account selection does not exist for these providers
 
@@ -79,7 +79,7 @@ The first noted that selection was implemented after parsing while CodexBar was 
 
 The second noted that `--all-accounts` advertised a Codex account as selectable while `--account` rejected it. Also true. Probing CodexBar 0.37.2 directly settled the question:
 
-```
+```text
 codexbar usage --provider claude ... --all-accounts   -> "No token accounts configured for claude."      exit 1
 codexbar usage --provider claude ... --account X      -> "No token accounts configured for claude."      exit 1
 codexbar usage --provider claude ... --account-index 1 -> "No token accounts configured for claude."     exit 1
@@ -96,7 +96,7 @@ What was done:
 
 - Account selection and discovery were **removed**. `config.json` has no `accounts` key, and there is no `--list-accounts` command.
 - `build_codexbar_command()` passes no account flags at all, and names the documented `usage` subcommand. Tests assert the argv element for element, including that no `--account*` or `--all-accounts` flag ever appears.
-- `require_single_record()` keeps the safety property that motivated the original finding: if CodexBar ever returns several records, the notifier stops and names them rather than monitoring an arbitrary account.
+- `require_single_record()` keeps the safety property that motivated the original finding: if CodexBar ever returns several records, the notifier stops without logging their identifiers rather than monitoring an arbitrary account.
 - Provider errors are **never downgraded**. An earlier draft treated any `--all-accounts` failure as "single account", which would have swallowed an expired-credentials error. `run_codexbar()` now raises `CodexbarError` for every failure, carrying CodexBar's own message, and checks stdout as well as the exit code because CodexBar reports provider errors as JSON on stdout — sometimes while exiting 0.
 - Multi-account support is documented as a limitation, to be revisited only if CodexBar gains real selection for Claude and Codex.
 

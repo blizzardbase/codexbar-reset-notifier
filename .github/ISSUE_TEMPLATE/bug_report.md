@@ -7,7 +7,7 @@ assignees: ''
 ---
 
 > **Redact your bot token and chat id before pasting anything.**
-> A Telegram token looks like `123456789:AA...`. If you have already pasted one, revoke it with `/revoke` in @BotFather.
+> If you have already pasted a Telegram token, revoke it with `/revoke` in @BotFather.
 
 ## What happened
 
@@ -35,19 +35,19 @@ assignees: ''
 
 `python3 monitor.py --status`:
 
-```
+```text
 paste here
 ```
 
 `python3 vps_notifier.py --status` on the VPS (if using `vps` mode):
 
-```
+```text
 paste here
 ```
 
 Last lines of the relevant log (`data/monitor-error.log`, or `data/cron.log` on the VPS):
 
-```
+```text
 paste here
 ```
 
@@ -55,6 +55,6 @@ paste here
 
 If a message arrived but was wrong, paste it here with any personal details removed.
 
-```
+```text
 paste here
 ```

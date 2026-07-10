@@ -28,6 +28,7 @@ CODEXBAR_FALLBACKS = ("/opt/homebrew/bin/codexbar", "/usr/local/bin/codexbar")
 
 
 def resolve_codexbar(config: dict) -> str:
+    """Return a configured or discovered CodexBar executable path."""
     configured = config.get("codexbar_path")
     if configured:
         if not Path(configured).is_file():
@@ -64,6 +65,7 @@ class CodexbarError(RuntimeError):
     """A CodexBar invocation failed. `detail` is CodexBar's own message."""
 
     def __init__(self, provider: str, detail: str):
+        """Build a provider-specific error without exposing credentials."""
         self.provider = provider
         self.detail = detail
         super().__init__(f"codexbar failed for provider {provider}: {detail}")
@@ -193,6 +195,7 @@ def notify_locally(config: dict, records: dict, now: datetime) -> str:
 
 
 def run_check(config: dict) -> int:
+    """Collect live reset data and either sync or notify locally."""
     records = collect_records(config)
     now = datetime.now(timezone.utc)
     if config["notification_mode"] == "vps":
@@ -205,6 +208,7 @@ def run_check(config: dict) -> int:
 
 
 def run_status(config: dict) -> int:
+    """Print live reset projections for every configured provider."""
     records = collect_records(config)
     now = datetime.now(timezone.utc)
     print(f"Mode: {config['notification_mode']}")
@@ -221,6 +225,7 @@ def run_status(config: dict) -> int:
 
 
 def run_test(config: dict) -> int:
+    """Send a test notification using the current production template."""
     common.notify(
         "CodexBar reset notifier test. "
         "Delivery to this private chat is working; no AI tokens were used."
@@ -230,6 +235,7 @@ def run_test(config: dict) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the Mac-side command-line parser."""
     parser = argparse.ArgumentParser(description="CodexBar reset notifier (Mac side)")
     parser.add_argument("--config", type=Path, default=None, help="path to config.json")
     parser.add_argument("--validate-config", action="store_true", help="validate config and exit")
@@ -239,6 +245,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[list] = None) -> int:
+    """Dispatch the selected Mac-side command."""
     args = build_parser().parse_args(argv)
     common.load_env()
     config = common.load_config(args.config)

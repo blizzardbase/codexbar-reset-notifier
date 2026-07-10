@@ -21,6 +21,17 @@ class SessionCycleTests(unittest.TestCase):
         self.assertEqual(upcoming, anchor)
         self.assertEqual(last, anchor - timedelta(minutes=300))
 
+    def test_anchor_more_than_one_window_ahead_has_no_completed_reset(self):
+        anchor = NOW + timedelta(minutes=400)
+        last, upcoming = common.cycle_bounds(window(anchor, 300), NOW)
+        self.assertIsNone(last)
+        self.assertEqual(upcoming, anchor)
+
+        records = {"claude": {"usage": {"primary": window(anchor, 300)}}}
+        decision = common.evaluate_reset(records, NOW, {}, "UTC", ("claude",))
+        self.assertEqual(decision.action, "unavailable")
+        self.assertIsNone(decision.key)
+
     def test_codex_session_anchor_in_the_past_advances_whole_cycles(self):
         anchor = NOW - timedelta(minutes=700)
         last, upcoming = common.cycle_bounds(window(anchor, 300), NOW)
@@ -97,6 +108,7 @@ class MissingAndInvalidDataTests(unittest.TestCase):
         self.assertIsNone(common.window_minutes({"windowMinutes": -5}))
         self.assertIsNone(common.window_minutes({"windowMinutes": True}))
         self.assertEqual(common.window_minutes({"windowMinutes": 300.0}), 300)
+        self.assertIsNone(common.window_minutes({"windowMinutes": 300.5}))
 
     def test_get_window_survives_malformed_records(self):
         self.assertEqual(common.get_window({"claude": None}, "claude", "primary"), {})

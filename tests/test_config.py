@@ -169,43 +169,43 @@ class RemoteDirTests(unittest.TestCase):
         config = common.validate_config(base_config(vps_remote_dir="/home/u/my notifier"))
         self.assertEqual(common.shell_quote(config["vps_remote_dir"]), "'/home/u/my notifier'")
 
+    def test_shell_and_cron_metacharacters_are_rejected(self):
+        for suffix in ("$(touch pwned)", "`id`", "'quoted'", '"quoted"', "line\nbreak", "50%off"):
+            with self.subTest(suffix=suffix):
+                with self.assertRaises(ConfigError):
+                    common.validate_config(base_config(vps_remote_dir=f"/home/u/{suffix}"))
+
 
 class SingleRecordTests(unittest.TestCase):
     """CodexBar offers no working account selection for Claude or Codex."""
 
-    WORK = {"usage": {"accountEmail": "work@example.com", "primary": {}}}
-    PERSONAL = {"usage": {"accountEmail": "personal@example.com", "primary": {}}}
-    UNNAMED = {"usage": {"primary": {}}}
+    def setUp(self):
+        self.work = {"usage": {"accountEmail": "work@example.com", "primary": {}}}
+        self.personal = {"usage": {"accountEmail": "personal@example.com", "primary": {}}}
+        self.unnamed = {"usage": {"primary": {}}}
 
     def test_sole_record_is_returned(self):
-        self.assertIs(common.require_single_record([self.WORK], "claude"), self.WORK)
+        self.assertIs(common.require_single_record([self.work], "claude"), self.work)
 
     def test_sole_unnamed_record_is_returned(self):
-        self.assertIs(common.require_single_record([self.UNNAMED], "claude"), self.UNNAMED)
+        self.assertIs(common.require_single_record([self.unnamed], "claude"), self.unnamed)
 
     def test_several_records_are_never_reduced_to_the_first(self):
         with self.assertRaises(ConfigError) as ctx:
-            common.require_single_record([self.WORK, self.PERSONAL], "claude")
+            common.require_single_record([self.work, self.personal], "claude")
         message = str(ctx.exception)
-        self.assertIn("work@example.com", message)
-        self.assertIn("personal@example.com", message)
+        self.assertNotIn("work@example.com", message)
+        self.assertNotIn("personal@example.com", message)
+        self.assertIn("2 accounts", message)
         self.assertIn("cannot choose between them", message)
 
     def test_several_unnamed_records_still_refuse_to_guess(self):
         with self.assertRaises(ConfigError):
-            common.require_single_record([self.UNNAMED, self.UNNAMED], "codex")
+            common.require_single_record([self.unnamed, self.unnamed], "codex")
 
     def test_no_records_is_rejected(self):
         with self.assertRaises(ConfigError):
             common.require_single_record([], "claude")
-
-    def test_account_identifier_prefers_email_then_account(self):
-        self.assertEqual(common.account_identifier(self.WORK), "work@example.com")
-        self.assertEqual(common.account_identifier({"account": "team"}), "team")
-        self.assertIsNone(common.account_identifier(self.UNNAMED))
-        self.assertIsNone(common.account_identifier({"account": "  "}))
-        self.assertIsNone(common.account_identifier(None))
-
 
 class NoAccountsKeyTests(unittest.TestCase):
     def test_accounts_is_not_a_config_key(self):

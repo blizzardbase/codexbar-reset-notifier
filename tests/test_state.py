@@ -157,9 +157,7 @@ class StalenessTests(unittest.TestCase):
         self.assertFalse(common.schedule_is_fresh({}, NOW, 30))
         self.assertFalse(common.schedule_is_fresh({"updatedAt": "nonsense"}, NOW, 30))
 
-    def test_stale_schedule_still_projects_and_notifies(self):
-        # Offline continuation is the entire point of the VPS: staleness warns,
-        # it never silences.
+    def test_projected_reset_is_sendable_independently_of_freshness(self):
         state = {"resetsSent": {"trigger": "older-key"}}
         records = sample_records()
         decision = common.evaluate_reset(records, NOW, state, "UTC", PROVIDERS)
@@ -207,6 +205,37 @@ class IngestTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self._ingest(json.dumps({"updatedAt": stamp(NOW), "records": {"claude": "nope"}}))
 
+    def test_payload_with_missing_primary_window_is_rejected(self):
+        payload = {"updatedAt": stamp(NOW), "records": {"claude": {"usage": {}}}}
+        with self.assertRaises(RuntimeError):
+            self._ingest(json.dumps(payload))
+        self.assertFalse(self.schedule.exists())
+
+    def test_payload_with_invalid_reset_timestamp_is_rejected(self):
+        for resets_at in (None, 123, "not-a-date"):
+            with self.subTest(resets_at=resets_at):
+                payload = sample_records()
+                payload["claude"]["usage"]["primary"]["resetsAt"] = resets_at
+                with self.assertRaises(RuntimeError):
+                    self._ingest(json.dumps({"updatedAt": stamp(NOW), "records": payload}))
+                self.assertFalse(self.schedule.exists())
+
+    def test_payload_with_invalid_window_minutes_is_rejected(self):
+        for minutes in (0, -1, True, "300", 300.5):
+            with self.subTest(minutes=minutes):
+                payload = sample_records()
+                payload["claude"]["usage"]["primary"]["windowMinutes"] = minutes
+                with self.assertRaises(RuntimeError):
+                    self._ingest(json.dumps({"updatedAt": stamp(NOW), "records": payload}))
+                self.assertFalse(self.schedule.exists())
+
+    def test_payload_may_omit_window_minutes_until_the_anchor_passes(self):
+        payload = sample_records()
+        del payload["claude"]["usage"]["primary"]["windowMinutes"]
+        self.assertEqual(
+            self._ingest(json.dumps({"updatedAt": stamp(NOW), "records": payload})), 0
+        )
+
     def test_non_object_payload_is_rejected(self):
         with self.assertRaises(RuntimeError):
             self._ingest(json.dumps([1, 2, 3]))
@@ -221,7 +250,12 @@ class VpsCheckTests(unittest.TestCase):
         root = Path(self.tmp.name)
         self.schedule = root / "schedule.json"
         self.state = root / "vps-state.json"
-        for name, value in (("SCHEDULE_FILE", self.schedule), ("STATE_FILE", self.state)):
+        self.lock = root / "vps-check.lock"
+        for name, value in (
+            ("SCHEDULE_FILE", self.schedule),
+            ("STATE_FILE", self.state),
+            ("LOCK_FILE", self.lock),
+        ):
             patcher = mock.patch.object(vps_notifier, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -250,6 +284,7 @@ class VpsCheckTests(unittest.TestCase):
         vps_notifier.run_check(self.config)
         self.assertEqual(self.sent, [])
         self.assertTrue(self.state.exists())
+        self.assertTrue(self.lock.exists())
 
     def test_second_check_after_a_reset_sends_exactly_one_message(self):
         self.write_schedule()
@@ -267,10 +302,43 @@ class VpsCheckTests(unittest.TestCase):
         vps_notifier.run_check(self.config)
         self.assertEqual(len(self.sent), 1)
 
+    def test_unavailable_schedule_warns_without_sending_or_mutating_state(self):
+        records = live_records()
+        records["claude"]["usage"]["primary"] = {
+            "resetsAt": stamp(datetime.now(timezone.utc) - timedelta(minutes=1))
+        }
+        common.atomic_json_write(
+            self.schedule,
+            {"updatedAt": stamp(datetime.now(timezone.utc)), "records": records},
+        )
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(vps_notifier.run_check(self.config), 0)
+        self.assertIn("no projectable session schedule for Claude", stderr.getvalue())
+        self.assertEqual(self.sent, [])
+        self.assertFalse(self.state.exists())
+
     def test_corrupt_state_file_does_not_crash_the_check(self):
         self.write_schedule()
         self.state.write_text("{ broken")
         self.assertEqual(vps_notifier.run_check(self.config), 0)
+
+
+class VpsParserTests(unittest.TestCase):
+    def test_one_action_is_required(self):
+        with mock.patch("sys.stderr", new_callable=io.StringIO):
+            with self.assertRaises(SystemExit):
+                vps_notifier.build_parser().parse_args([])
+
+    def test_actions_are_mutually_exclusive(self):
+        with mock.patch("sys.stderr", new_callable=io.StringIO):
+            with self.assertRaises(SystemExit):
+                vps_notifier.build_parser().parse_args(["--ingest", "--check"])
+
+    def test_each_action_is_accepted_individually(self):
+        for action in ("--ingest", "--check", "--status", "--test", "--validate-config"):
+            with self.subTest(action=action):
+                args = vps_notifier.build_parser().parse_args([action])
+                self.assertTrue(getattr(args, action[2:].replace("-", "_")))
 
 
 def live_records():

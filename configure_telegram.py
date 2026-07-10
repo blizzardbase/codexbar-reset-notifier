@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -18,9 +19,11 @@ import common
 from common import ConfigError
 
 PLACEHOLDER_TOKEN = "replace_with_botfather_token"
+_ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def read_env_pairs(path: Path) -> dict:
+    """Return parsed key/value pairs without exposing values in output."""
     values = {}
     if path.exists():
         for line in path.read_text().splitlines():
@@ -32,10 +35,13 @@ def read_env_pairs(path: Path) -> dict:
 
 
 def fetch_updates(token: str) -> list:
+    """Fetch Telegram updates for the configured bot."""
     url = f"{common.TELEGRAM_API_BASE}/bot{token}/getUpdates"
     try:
         with urllib.request.urlopen(url, timeout=30) as response:
             payload = json.loads(response.read())
+    except json.JSONDecodeError:
+        raise RuntimeError("Telegram API returned an invalid JSON response") from None
     except urllib.error.HTTPError as exc:
         if exc.code == 401:
             raise RuntimeError("Telegram rejected the bot token. Check TELEGRAM_BOT_TOKEN in .env.") from None
@@ -48,6 +54,7 @@ def fetch_updates(token: str) -> list:
 
 
 def select_chat(updates: list, want_group: bool) -> dict:
+    """Return the most recent private or group chat from Telegram updates."""
     wanted = {"group", "supergroup"} if want_group else {"private"}
     chats = [
         entry["message"]["chat"]
@@ -64,11 +71,31 @@ def select_chat(updates: list, want_group: bool) -> dict:
 
 
 def write_env(path: Path, values: dict) -> None:
-    path.write_text("".join(f"{key}={value}\n" for key, value in values.items()))
+    """Update matching keys while preserving comments, blanks, and unrelated lines."""
+    original = path.read_text().splitlines(keepends=True) if path.exists() else []
+    seen = set()
+    rendered = []
+    for raw_line in original:
+        body = raw_line.rstrip("\r\n")
+        newline = raw_line[len(body) :]
+        candidate = body.strip()
+        key = candidate.split("=", 1)[0].strip() if "=" in candidate else ""
+        if not candidate.startswith("#") and _ENV_KEY.fullmatch(key or "") and key in values:
+            rendered.append(f"{key}={values[key]}{newline}")
+            seen.add(key)
+        else:
+            rendered.append(raw_line)
+
+    missing = [(key, value) for key, value in values.items() if key not in seen]
+    if missing and rendered and not rendered[-1].endswith(("\n", "\r")):
+        rendered[-1] += "\n"
+    rendered.extend(f"{key}={value}\n" for key, value in missing)
+    path.write_text("".join(rendered))
     path.chmod(0o600)
 
 
 def main(argv: Optional[list] = None) -> int:
+    """Discover a Telegram chat and persist its id in .env."""
     parser = argparse.ArgumentParser(description="Save your Telegram chat id to .env")
     parser.add_argument(
         "--group", action="store_true", help="use the latest group chat instead of a private chat"
@@ -82,8 +109,7 @@ def main(argv: Optional[list] = None) -> int:
         raise ConfigError("Add your BotFather token as TELEGRAM_BOT_TOKEN in .env first.")
 
     chat = select_chat(fetch_updates(token), args.group)
-    values["TELEGRAM_CHAT_ID"] = str(chat["id"])
-    write_env(env_path, values)
+    write_env(env_path, {"TELEGRAM_CHAT_ID": str(chat["id"])})
 
     label = chat.get("title") or chat.get("username") or "private chat"
     print(f"Telegram destination saved: {label} ({chat.get('type')})")
@@ -96,4 +122,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (ConfigError, RuntimeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from None

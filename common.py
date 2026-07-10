@@ -66,6 +66,7 @@ _POSITIVE_INTS = (
 CRON_ALLOWED_MINUTES = (1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60)
 
 _FRACTION = re.compile(r"\.(\d+)")
+_SAFE_REMOTE_DIR = re.compile(r"^/[A-Za-z0-9._ /-]+$")
 
 # Result of evaluating whether a reset notification is due.
 #   send        -> deliver `message`, then record `key`
@@ -180,8 +181,11 @@ def validate_config(config: dict) -> dict:
             )
         if not remote_dir.startswith("/"):
             raise ConfigError("Config key vps_remote_dir must be an absolute path.")
-        if "%" in remote_dir:
-            raise ConfigError("Config key vps_remote_dir must not contain '%'; cron reserves it.")
+        if not _SAFE_REMOTE_DIR.fullmatch(remote_dir):
+            raise ConfigError(
+                "Config key vps_remote_dir may contain only letters, numbers, spaces, '/', "
+                "'-', '_' and '.'."
+            )
         # Surfaces a bad interval at setup time rather than at cron-install time.
         cron_schedule(config)
 
@@ -193,6 +197,7 @@ def validate_config(config: dict) -> dict:
 
 
 def config_timezone(config: dict) -> ZoneInfo:
+    """Return the configured IANA timezone."""
     return ZoneInfo(config["timezone"])
 
 
@@ -235,25 +240,11 @@ def require_single_record(entries: Sequence[dict], provider: str) -> dict:
     if len(entries) == 1:
         return entries[0]
 
-    known = ", ".join(i for i in (account_identifier(e) for e in entries) if i) or "unnamed accounts"
     raise ConfigError(
-        f"CodexBar reports {len(entries)} accounts for provider {provider} ({known}), and this "
+        f"CodexBar reports {len(entries)} accounts for provider {provider}, and this "
         f"release cannot choose between them. Sign out of the extra accounts in CodexBar, or "
         f"watch a single account. See 'Known limitations' in the README."
     )
-
-
-def account_identifier(entry: dict) -> Optional[str]:
-    """The account label CodexBar reports, if any. Never sent to the VPS."""
-    if not isinstance(entry, dict):
-        return None
-    usage = entry.get("usage")
-    if isinstance(usage, dict):
-        email = usage.get("accountEmail")
-        if isinstance(email, str) and email.strip():
-            return email.strip()
-    account = entry.get("account")
-    return account.strip() if isinstance(account, str) and account.strip() else None
 
 
 def ssh_target(config: dict) -> str:
@@ -319,6 +310,8 @@ def window_minutes(window: Any) -> Optional[int]:
     value = window.get("windowMinutes")
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
+    if isinstance(value, float) and not value.is_integer():
+        return None
     minutes = int(value)
     return minutes if minutes > 0 else None
 
@@ -342,7 +335,8 @@ def cycle_bounds(window: Any, now: datetime) -> Optional[Tuple[Optional[datetime
 
     minutes = window_minutes(window)
     if now < anchor:
-        previous = anchor - timedelta(minutes=minutes) if minutes else None
+        candidate = anchor - timedelta(minutes=minutes) if minutes else None
+        previous = candidate if candidate is not None and candidate <= now else None
         return previous, anchor
 
     if minutes is None:
@@ -357,11 +351,13 @@ def cycle_bounds(window: Any, now: datetime) -> Optional[Tuple[Optional[datetime
 
 
 def next_reset(window: Any, now: datetime) -> Optional[datetime]:
+    """Return the next projected reset, or None when unavailable."""
     bounds = cycle_bounds(window, now)
     return bounds[1] if bounds else None
 
 
 def last_reset(window: Any, now: datetime) -> Optional[datetime]:
+    """Return the last completed reset, or None when unavailable."""
     bounds = cycle_bounds(window, now)
     return bounds[0] if bounds else None
 
@@ -375,6 +371,7 @@ def get_window(records: dict, provider: str, slot: str) -> dict:
 
 
 def _plural(word: str, count: int) -> str:
+    """Pluralize a simple English noun for a numeric count."""
     return word if count == 1 else word + "s"
 
 
@@ -404,6 +401,7 @@ def timezone_label(timezone_name: str) -> str:
 
 
 def provider_label(provider: str) -> str:
+    """Return a human-readable provider name."""
     return PROVIDER_LABELS.get(provider, provider.replace("-", " ").replace("_", " ").title())
 
 
@@ -485,6 +483,7 @@ def evaluate_reset(
 
 
 def mark_sent(state: dict, key: str) -> dict:
+    """Record the trigger reset key in a mutable state mapping."""
     state.setdefault("resetsSent", {})["trigger"] = key
     return state
 
@@ -535,6 +534,7 @@ def send_telegram(token: str, chat_id: str, message: str) -> None:
 
 
 def notify(message: str) -> None:
+    """Load Telegram credentials and send one notification."""
     token, chat_id = telegram_credentials()
     send_telegram(token, chat_id, message)
 
@@ -557,6 +557,7 @@ _SHELL_COMPUTED = {"ssh_target": ssh_target, "cron_schedule": cron_schedule}
 
 
 def main(argv: Sequence[str]) -> int:
+    """Expose selected validated helpers to the shell deployment scripts."""
     if len(argv) != 1 or argv[0] not in _SHELL_KEYS:
         print(f"usage: python3 common.py [{'|'.join(_SHELL_KEYS)}]", file=sys.stderr)
         return 2

@@ -20,6 +20,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
@@ -40,15 +42,15 @@ jobs:
 
       - name: Validate the shipped example configuration
         run: |
-          cp config.example.json config.json
-          python3 monitor.py --validate-config
-          python3 vps_notifier.py --validate-config
-          rm config.json
+          python3 monitor.py --validate-config --config config.example.json
+          python3 vps_notifier.py --validate-config --config config.example.json
 
   shell:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Check shell syntax
         run: |
@@ -63,6 +65,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Refuse ignored files that should never be tracked
         run: |

@@ -34,7 +34,7 @@ Read `AGENTS.md` for the full invariant list before changing logic.
 
 ## Testing rules
 
-Any change to projection, formatting, deduplication, account selection, or config validation needs a test.
+Any change to projection, formatting, deduplication, or config validation needs a test.
 
 Build Telegram payloads with `build_telegram_request()` and assert on the URL and body. When exercising `run_check`, patch `common.notify`. If a test would open a socket, it is wrong.
 

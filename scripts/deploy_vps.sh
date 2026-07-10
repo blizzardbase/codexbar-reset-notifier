@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# REMOTE_Q is intentionally expanded locally after being shell-quoted by
-# common.shell_quote() for safe use in each remote command.
-# shellcheck disable=SC2029
 # Copy the VPS half of the project to the remote host over SSH.
 # Idempotent: re-running overwrites the same files. No sudo, no system changes,
 # no inbound ports. Everything lands inside config.vps_remote_dir.
@@ -39,15 +36,20 @@ ssh "${SSH_OPTS[@]}" "$TARGET" 'command -v python3 >/dev/null' \
   || { echo "ERROR: python3 was not found on the VPS." >&2; exit 1; }
 
 echo "Creating $REMOTE_DIR ..."
+# REMOTE_Q is deliberately expanded locally after common.shell_quote().
+# shellcheck disable=SC2029
 ssh "${SSH_OPTS[@]}" "$TARGET" "mkdir -p $REMOTE_Q $REMOTE_Q/data && chmod 700 $REMOTE_Q/data"
 
 echo "Copying files ..."
+# shellcheck disable=SC2029
 tar -cf - -C "$ROOT" vps_notifier.py common.py config.json requirements.txt .env \
   | ssh "${SSH_OPTS[@]}" "$TARGET" "tar -xf - -C $REMOTE_Q"
 
+# shellcheck disable=SC2029
 ssh "${SSH_OPTS[@]}" "$TARGET" "chmod 600 $REMOTE_Q/.env"
 
 echo "Validating the remote configuration ..."
+# shellcheck disable=SC2029
 ssh "${SSH_OPTS[@]}" "$TARGET" "python3 $REMOTE_Q/vps_notifier.py --validate-config"
 
 echo "Deployed to $TARGET:$REMOTE_DIR"

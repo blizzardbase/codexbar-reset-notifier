@@ -6,14 +6,14 @@
 
 <!-- Paste the actual output, not "tests pass". -->
 
-```
+```bash
 python3 -m unittest discover
 ```
 
 - [ ] `python3 -m py_compile common.py monitor.py vps_notifier.py configure_telegram.py tests/*.py`
 - [ ] `python3 -m unittest discover -v`
 - [ ] `for f in scripts/*.sh; do bash -n "$f"; done`
-- [ ] `cp config.example.json config.json && python3 monitor.py --validate-config && rm config.json`
+- [ ] `python3 monitor.py --validate-config --config config.example.json`
 - [ ] Exercised against a real CodexBar install / VPS (say which, or say neither)
 
 ## Invariants
@@ -29,5 +29,5 @@ python3 -m unittest discover
 
 ## Tests
 
-- [ ] Behavior change to projection, formatting, deduplication, account selection, or config validation is covered by a new test
+- [ ] Behavior change to projection, formatting, deduplication, or config validation is covered by a new test
 - [ ] Or: this change has no runtime surface (docs, comments)

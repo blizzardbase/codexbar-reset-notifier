@@ -179,8 +179,9 @@ class RecordShapeTests(unittest.TestCase):
                 with self.assertRaises(ConfigError) as ctx:
                     monitor.collect_records(config)
         message = str(ctx.exception)
-        self.assertIn("a@example.com", message)
-        self.assertIn("b@example.com", message)
+        self.assertNotIn("a@example.com", message)
+        self.assertNotIn("b@example.com", message)
+        self.assertIn("2 accounts", message)
         self.assertIn("cannot choose between them", message)
 
     def test_no_records_is_rejected(self):

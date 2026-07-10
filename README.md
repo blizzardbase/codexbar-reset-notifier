@@ -35,7 +35,7 @@ You can skip the VPS entirely (see **Local-only mode**), but then notifications 
 
 ## Architecture
 
-```
+```text
 ┌──────────────────────────┐        SSH (outbound only)       ┌────────────────────────┐
 │  Your Mac                │  ──────────────────────────────► │  Your VPS              │
 │                          │                                  │                        │
@@ -97,7 +97,7 @@ If that prints JSON containing `resetsAt`, you are ready. If `codexbar` is not o
 
 1. Open Telegram and start a chat with **@BotFather**.
 2. Send `/newbot` and follow the prompts (a name, then a username ending in `bot`).
-3. BotFather replies with a **token** that looks like `123456789:AA-example-token-replace-me`.
+3. BotFather replies with a **token**. Copy it without sharing it anywhere else.
 4. Keep it private. Anyone with the token controls the bot.
 
 ### Start a private chat with the bot
@@ -118,7 +118,7 @@ cp config.example.json config.json
 Open `.env` and paste your BotFather token:
 
 ```ini
-TELEGRAM_BOT_TOKEN=123456789:AA-example-token-replace-me
+TELEGRAM_BOT_TOKEN=PASTE_BOT_TOKEN_HERE
 TELEGRAM_CHAT_ID=
 ```
 
