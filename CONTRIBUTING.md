@@ -52,8 +52,9 @@ Uninstall scripts must remove only what this project created: the `# codexbar-re
 
 `monitor.build_codexbar_command()` owns the argument list, and tests assert it element for element. Two traps:
 
-- `--account` and `--all-accounts` only address CodexBar **token accounts**. A provider signed in with OAuth or cookies rejects them with `No token accounts configured`. Never pass either flag unconditionally — it breaks Claude.
+- **Pass no account flags.** `--account`, `--account-index`, and `--all-accounts` address CodexBar *token accounts*. Neither Claude nor Codex has any, and each rejects the flags with a different message. Passing them breaks both providers. Confirm against the real CLI before reintroducing any of them.
 - CodexBar reports provider failures as a JSON `error` object on **stdout**, sometimes while exiting 0. Check the payload, not just the return code.
+- **Never downgrade a provider error.** Do not map a failure onto a benign fallback such as "this provider has one account"; an expired-credentials error would disappear. Let it surface.
 
 ## Commit and PR style
 

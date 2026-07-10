@@ -35,10 +35,9 @@ Two halves that share one module.
 - `windowMinutes` is the repeating interval. **Never hard-code five hours, seven days, or any other interval.** If a provider stops reporting `windowMinutes` and its anchor has passed, the window is unprojectable and must be reported as unavailable, not guessed.
 - The VPS projects forward from the last confirmed anchor. Every live Mac sync overwrites the anchors, correcting drift.
 - Only reset metadata crosses the network. `monitor.slim_record()` strips usage percentages, account emails, and everything else. Do not widen it.
-- CodexBar may report several records per provider. **Never take `entries[0]`.** `common.select_account_record()` uses `config.accounts[provider]` and refuses to guess when more than one record exists.
-- `monitor.build_codexbar_command()` owns the exact argv. It invokes the documented `codexbar usage ...` form and passes `--account` **only** when the user configured one, `--all-accounts` **only** for `--list-accounts`. Both flags address CodexBar *token accounts*; an OAuth/cookie provider rejects them with `No token accounts configured`, so passing either unconditionally breaks Claude. Tests assert the argv element for element.
-- CodexBar reports provider failures as a JSON `error` object on **stdout**, sometimes with exit 0. `run_codexbar()` checks both. Never trust the exit code alone.
-
+- CodexBar may report several records per provider. **Never take `entries[0]`.** `common.require_single_record()` returns the sole record or raises, naming the accounts it saw.
+- `monitor.build_codexbar_command()` owns the exact argv and passes **no account flags**. `--account`, `--account-index`, and `--all-accounts` all address CodexBar *token accounts*; verified against 0.37.2, Claude answers `No token accounts configured for claude.` and Codex answers `codex does not support token accounts.` Passing any of them breaks both providers. Tests assert the argv element for element.
+- CodexBar reports provider failures as a JSON `error` object on **stdout**, sometimes with exit 0. `run_codexbar()` checks both and raises `CodexbarError` carrying CodexBar's own message. **Never downgrade or swallow a provider error** — an expired-credentials failure must not be reinterpreted as anything benign.
 ## Security boundaries
 
 - Secrets live only in `.env` (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`). Never in `config.json`, never in code, never in logs.
