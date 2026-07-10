@@ -80,7 +80,8 @@ jobs:
       - name: Scan for secret-shaped strings
         run: |
           set +e
-          # Telegram bot-token shape, PEM headers, assigned credentials.
+          # Best-effort tripwires, not a guarantee. Secrets belong only in .env
+          # and must never enter code, config, logs, errors, or commits.
           git grep -InE '[0-9]{8,10}:[A-Za-z0-9_-]{35,}' -- . && FAIL=1
           git grep -InE 'BEGIN (RSA|OPENSSH|EC|DSA|PRIVATE)' -- . && FAIL=1
           git grep -InE '(password|secret|api_?key|access_?token)[[:space:]]*[=:][[:space:]]*["'"'"']?[A-Za-z0-9_/+-]{12,}' -- . && FAIL=1

@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -90,8 +92,26 @@ def write_env(path: Path, values: dict) -> None:
     if missing and rendered and not rendered[-1].endswith(("\n", "\r")):
         rendered[-1] += "\n"
     rendered.extend(f"{key}={value}\n" for key, value in missing)
-    path.write_text("".join(rendered))
-    path.chmod(0o600)
+    content = "".join(rendered)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            os.fchmod(temp_file.fileno(), 0o600)
+            temp_file.write(content)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        temp_path.replace(path)
+    except Exception:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+        raise
 
 
 def main(argv: Optional[list] = None) -> int:
