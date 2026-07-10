@@ -35,6 +35,7 @@ Two halves that share one module.
 - `windowMinutes` is the repeating interval. **Never hard-code five hours, seven days, or any other interval.** If a provider stops reporting `windowMinutes` and its anchor has passed, the window is unprojectable and must be reported as unavailable, not guessed.
 - The VPS projects forward from the last confirmed anchor. Every live Mac sync overwrites the anchors, correcting drift.
 - Only reset metadata crosses the network. `monitor.slim_record()` strips usage percentages, account emails, and everything else. Do not widen it.
+- CodexBar may report several signed-in accounts per provider. **Never take `entries[0]`.** `common.select_account_record()` uses `config.accounts[provider]`, and refuses to guess when more than one account exists.
 
 ## Security boundaries
 
@@ -50,6 +51,8 @@ Two halves that share one module.
 - Anything non-secret goes in `config.json`; ship a placeholder in `config.example.json`.
 - `config.json` is git-ignored. `config.example.json` must never contain a real host, user, path, chat id, or token.
 - Every config value is validated by `common.validate_config()` before any install, deploy, or run. Add new keys there with a type check and a clear error.
+- `vps_check_interval_seconds` must be a divisor of 60 minutes (or 60 itself). cron's `*/N` step restarts hourly, so a non-divisor fires irregularly across the hour boundary. `common.cron_schedule()` owns this rule and is called from `validate_config()`.
+- `vps_remote_dir` may contain spaces but never `%`, which cron reserves.
 - Errors must name the offending key and never echo credentials.
 
 ## Notification behavior
@@ -106,6 +109,7 @@ grep -rIn --exclude-dir=.git -E '[0-9]{8,10}:[A-Za-z0-9_-]{30,}' .   # bot-token
 
 - Standard library only. Python 3.9+. No third-party packages, ever.
 - Every shell script: `set -euo pipefail`, quoted paths, safe with spaces, idempotent, no `sudo`.
+- **`ssh` re-parses its command.** `ssh host cmd a b` concatenates the arguments into the single string `cmd a b` and hands it to the remote login shell, which word-splits and glob-expands it. Every remote argument must be quoted with `common.shell_quote()` first, or a path with a space and a cron `*` will arrive mangled. Testing the remote body by running `bash` directly does not exercise this.
 - Deployment and uninstall must be reversible and must not disturb unrelated cron entries, LaunchAgents, or files.
 - README must stay readable by a non-developer and must state plainly that no AI tokens are consumed.
 - Document the projection assumption wherever offline behavior is described: the VPS projects from the last confirmed anchor and window length; a provider-side schedule change while the Mac is offline may cause temporary drift, corrected by the next live sync.

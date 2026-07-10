@@ -48,7 +48,8 @@ Every value passes `common.validate_config()` before any install, deploy, or run
 - **Two-minute grace window.** `RESET_GRACE_SECONDS = 120`. A VPS outage longer than that causes the reset to be recorded silently rather than announced late.
 - **Silent first run.** A fresh install adopts the current cycle without notifying, so the user is not messaged about a reset that predates the install.
 - **Weekly line requires an interval.** Without `windowMinutes` on the weekly window, the line survives until its anchor passes, then disappears.
-- **Cron granularity.** The VPS check interval must be a whole number of minutes (60–3540).
+- **Cron granularity.** The VPS check interval must be a divisor of 60 minutes, or 60 itself. A `*/7` step would fire at :49, :56, then :00 — an irregular gap every hour. Rejected at validation time.
+- **One account per provider.** When CodexBar reports multiple signed-in accounts, `accounts` in `config.json` must name the one to watch. The notifier refuses to guess rather than silently monitoring the wrong account.
 - **`data/cron.log` is never rotated.** It grows slowly and can be deleted freely.
 - **Local-only mode cannot notify while the Mac sleeps.** Documented, not fixable without the VPS.
 
@@ -59,6 +60,16 @@ Every value passes `common.validate_config()` before any install, deploy, or run
 - If notifications stop, check in this order: `./scripts/test_notification.sh`, the LaunchAgent (`launchctl print`), `data/monitor-error.log`, the VPS cron entry, `vps_notifier.py --status`, `data/cron.log`.
 - Telegram notification rules are device-specific. If private-chat notifications are globally muted on the phone, the bot chat must be an explicit exception.
 - If a provider's window length changes, no code change is needed — the next Mac sync carries the new `windowMinutes`.
+
+## Review corrections (post-review pass)
+
+An external review found three defects in the first public-release cut. All three are fixed and covered by tests.
+
+1. **Unsafe remote quoting in `install_vps_cron.sh`.** It passed the remote directory and cron schedule as separate `ssh` arguments. `ssh` concatenates its command arguments into one string for the remote login shell, so `/home/deploy/my notifier` split into two words and the schedule's `*` glob-expanded against the remote directory. Every remote argument is now quoted with `shell_quote()`. This was the only affected call site; every other `ssh` invocation already passed a single pre-quoted string.
+
+2. **Cron intervals that do not divide 60.** `*/7` restarts at the top of each hour, firing at :49, :56, then :00. `common.cron_schedule()` now accepts only divisors of 60 (plus 60 itself, rendered `0 * * * *` rather than the never-firing `*/60`), and `validate_config()` calls it so a bad interval fails at setup.
+
+3. **Multiple CodexBar accounts silently reduced to the first.** `fetch_provider()` returned `entries[0]`. It now returns every record, and `select_account_record()` picks the one named by `config.accounts[provider]`, erroring with the list of available accounts when there is more than one and none is configured. Account identifiers never leave the Mac.
 
 ## Public-release status
 

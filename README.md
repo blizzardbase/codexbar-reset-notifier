@@ -179,6 +179,7 @@ If that prints `ok` without asking for a password, you are set. Otherwise config
 {
   "timezone": "America/New_York",
   "providers": ["claude", "codex"],
+  "accounts": {},
   "codexbar_path": null,
   "notification_mode": "vps",
   "vps_host": "your-vps-host",
@@ -223,13 +224,14 @@ Secrets live in `.env`. Everything else lives in `config.json`.
 | --- | --- |
 | `timezone` | IANA timezone used to render reset times, e.g. `America/New_York`. |
 | `providers` | Ordered list. The **first** provider triggers the notification; the **second** is the one counted down to. |
+| `accounts` | Which account to watch per provider, e.g. `{"claude": "work@example.com"}`. Leave `{}` when each provider has a single signed-in account. Required as soon as CodexBar reports more than one. |
 | `codexbar_path` | Full path to the `codexbar` binary, or `null` to search `PATH` and the usual Homebrew locations. |
 | `notification_mode` | `"local"` or `"vps"`. |
 | `vps_host` | SSH host alias or hostname. Required in `vps` mode. |
 | `vps_user` | SSH username, or `""` when the alias supplies it. |
 | `vps_remote_dir` | Absolute path on the VPS. Everything is confined here. |
 | `mac_sync_interval_seconds` | How often the Mac reads CodexBar and syncs. Default `300`. |
-| `vps_check_interval_seconds` | How often the VPS checks for a due reset. Must be a whole number of minutes. Default `60`. |
+| `vps_check_interval_seconds` | How often the VPS checks for a due reset. Must be a whole number of minutes that divides 60 evenly (1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30) or exactly 60. Default `60`. |
 | `stale_data_minutes` | How old a synced schedule may be before it is reported as stale. Default `30`. |
 
 ---
@@ -277,8 +279,9 @@ In practice the Mac syncs every five minutes whenever it is awake, so drift is b
 - **Weekly line needs an interval.** If a provider reports a weekly `resetsAt` without `windowMinutes`, the weekly line survives until that timestamp passes, then disappears rather than being guessed.
 - **Two-minute grace window.** A reset is announced only if the VPS notices it within two minutes. If the VPS is down longer than that, the reset is recorded silently and the next one is announced normally. No late or duplicate alerts.
 - **First run is silent.** On a brand-new install the current cycle is adopted without notifying, so you are not messaged about a reset that happened before you installed anything.
-- **Cron granularity.** `vps_check_interval_seconds` must be a whole number of minutes between 60 and 3540.
-- **No `%` in paths.** cron treats `%` specially; avoid it in `vps_remote_dir`.
+- **Cron granularity.** cron's `*/N` step restarts every hour, so an N that does not divide 60 (seven minutes, say) leaves an irregular gap across each hour boundary. Only divisors of 60 are accepted, plus 60 itself for an hourly check. Anything else is rejected at validation time rather than silently misbehaving.
+- **No `%` in `vps_remote_dir`.** cron reserves it. Rejected at validation time.
+- **One account per provider.** If CodexBar reports several signed-in accounts, you must name the one to watch in `accounts`. The notifier will not guess.
 - **`data/cron.log` grows slowly** and is never rotated. It is tiny, but delete it if you like.
 - **Local-only mode cannot notify while the Mac sleeps.** This is the whole reason VPS mode exists.
 
@@ -309,6 +312,13 @@ ssh your-vps-host 'python3 /home/your-vps-user/codexbar-reset-notifier/vps_notif
 ssh your-vps-host 'tail -n 20 /home/your-vps-user/codexbar-reset-notifier/data/cron.log'
 ```
 `--status` tells you when the Mac last synced and what the VPS expects next.
+
+**`CodexBar reports N accounts for provider ...`.**
+You are signed in to more than one Claude or Codex account. Name the one you want in `config.json`:
+```json
+"accounts": { "claude": "work@example.com" }
+```
+The error message lists the accounts CodexBar can see. Account names stay on your Mac and are never sent to the VPS.
 
 **Times are in the wrong timezone.**
 `timezone` in `config.json` controls only how times are *displayed*. Change it and redeploy.
