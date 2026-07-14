@@ -29,7 +29,7 @@ CodexBar already exposes the exact reset timestamps as structured JSON, so no sc
 - PR #5 shipped weekly-only Codex support: a missing Codex primary window is valid, alert text has no Codex countdown, and `/usage` omits the nonexistent session line.
 - The live Mac read confirms Claude session + weekly windows and a Codex weekly-only window.
 - The VPS deployment, schedule sync, and one-minute cron installation were exercised successfully. Both current Mac LaunchAgents are installed; the legacy LaunchAgents are disabled.
-- Two configured Telegram destinations are loaded without exposing their ids. No test notification was sent, so production deduplication state was not altered for a preview.
+- Two configured Telegram destinations are loaded without exposing their ids. An explicit test notification was sent successfully to both destinations without altering production deduplication state.
 
 ## Current architecture
 
