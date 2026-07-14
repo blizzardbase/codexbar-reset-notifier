@@ -6,7 +6,7 @@ The alert includes Claude and Codex weekly reset times. CodexBar may report no C
 
 **No AI tokens are consumed.** This project never calls Claude, Codex, an LLM, or any paid AI API. It is plain Python, SSH, cron, the CodexBar CLI, and the Telegram Bot API.
 
-> **Release status:** The projection, notification, validation, and lifecycle logic is covered by automated tests and CI. The generic `deploy_vps.sh` transfer has not yet been exercised against a disposable VPS, so review the generated configuration and deployment commands before the first production install.
+> **Release status:** The projection, notification, validation, and lifecycle logic is covered by automated tests and CI. The deployment and cron installers have been exercised on a live VPS. Still review your own configuration before first use.
 
 ---
 

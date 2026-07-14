@@ -24,6 +24,13 @@ CodexBar already exposes the exact reset timestamps as structured JSON, so no sc
 
 **No hard-coded intervals.** `windowMinutes` from the provider drives every projection. The Claude primary window is the session trigger. Codex can omit `primary` entirely and still supply a weekly `secondary` window. If a reported window stops including its interval and its anchor has passed, that window is unavailable rather than guessed.
 
+## Production verification — July 14, 2026
+
+- PR #5 shipped weekly-only Codex support: a missing Codex primary window is valid, alert text has no Codex countdown, and `/usage` omits the nonexistent session line.
+- The live Mac read confirms Claude session + weekly windows and a Codex weekly-only window.
+- The VPS deployment, schedule sync, and one-minute cron installation were exercised successfully. Both current Mac LaunchAgents are installed; the legacy LaunchAgents are disabled.
+- Two configured Telegram destinations are loaded without exposing their ids. No test notification was sent, so production deduplication state was not altered for a preview.
+
 ## Current architecture
 
 - `common.py` holds every rule: config validation, cycle projection, message formatting, atomic JSON writes, Telegram payload construction. Both halves import it, so behavior cannot diverge.
@@ -110,7 +117,7 @@ Verified against the real binary on macOS: `--status` reads live Claude and Code
 
 This repository is the cleaned, publishable version. It was built as a fresh export with new Git history; no commits, `.env`, `data/`, logs, or personal configuration were carried over from the private original.
 
-The release candidate is hosted in the public GitHub repository `blizzardbase/codexbar-reset-notifier`. PR #1 was squash-merged into `main` on July 10, 2026 after the full review loop completed. The untested first-run VPS transfer is disclosed in the README rather than hidden behind repository visibility.
+The release candidate is hosted in the public GitHub repository `blizzardbase/codexbar-reset-notifier`. PR #1 was squash-merged into `main` on July 10, 2026 after the full review loop completed. PR #5 added weekly-only Codex handling and was squash-merged on July 14, 2026.
 
 Completed for release:
 
@@ -135,7 +142,7 @@ The review added these safeguards:
 - Multiple-account errors report only the provider and count, never account identifiers.
 - GitHub Actions does not persist checkout credentials, and documentation contains no credential-shaped examples.
 
-The only infrastructure check still outstanding is exercising `scripts/deploy_vps.sh` and the cron installer against a throwaway VPS. This is a documented first-run risk and remains the next release task.
+The deployment and cron installers were exercised against the live VPS on July 14, 2026. The documented offline-projection assumptions remain the main operational risk to monitor.
 
 ## Handoff instructions
 
