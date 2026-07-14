@@ -3,8 +3,11 @@
 No test here executes the real CodexBar binary; subprocess.run is patched.
 """
 import json
+import io
 import subprocess
 import unittest
+from contextlib import redirect_stdout
+from datetime import datetime, timezone
 from unittest import mock
 
 import monitor
@@ -197,6 +200,52 @@ class RecordShapeTests(unittest.TestCase):
         self.assertNotIn("secret@example.com", text)
         self.assertNotIn("usedPercent", text)
         self.assertNotIn("accountEmail", text)
+
+    def test_codex_weekly_only_record_is_kept_without_an_invented_session(self):
+        weekly_only = {
+            "provider": "codex",
+            "usage": {
+                "primary": None,
+                "secondary": {
+                    "resetsAt": "2026-07-16T00:00:00Z",
+                    "windowMinutes": 10080,
+                    "usedPercent": 40,
+                },
+            },
+        }
+        slim = monitor.slim_record(weekly_only)
+        self.assertEqual(
+            slim,
+            {
+                "usage": {
+                    "secondary": {"resetsAt": "2026-07-16T00:00:00Z", "windowMinutes": 10080}
+                }
+            },
+        )
+
+
+class CodexBarAvailabilityTests(unittest.TestCase):
+    def test_app_bundle_helper_is_a_discovery_fallback(self):
+        helper = "/Applications/CodexBar.app/Contents/Helpers/CodexBarCLI"
+        with mock.patch.object(monitor.shutil, "which", return_value=None):
+            with mock.patch.object(monitor, "CODEXBAR_FALLBACKS", (helper,)):
+                with mock.patch.object(monitor.Path, "is_file", return_value=True):
+                    self.assertEqual(monitor.resolve_codexbar({"codexbar_path": None}), helper)
+
+    def test_status_omits_a_missing_codex_session_window(self):
+        records = {
+            "claude": {"usage": {"primary": {"resetsAt": "2026-07-10T12:00:00Z"}}},
+            "codex": {"usage": {"secondary": {"resetsAt": "2026-07-16T00:00:00Z"}}},
+        }
+        config = {"notification_mode": "vps", "providers": ["claude", "codex"], "timezone": "UTC"}
+        output = io.StringIO()
+        with mock.patch.object(monitor, "collect_records", return_value=records):
+            with mock.patch.object(monitor, "datetime") as clock:
+                clock.now.return_value = datetime(2026, 7, 10, 8, 0, tzinfo=timezone.utc)
+                with redirect_stdout(output):
+                    monitor.run_status(config)
+        self.assertIn("Codex weekly next reset:", output.getvalue())
+        self.assertNotIn("Codex session next reset:", output.getvalue())
 
 
 if __name__ == "__main__":

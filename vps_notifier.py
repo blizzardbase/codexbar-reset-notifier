@@ -3,8 +3,8 @@
 
 Receives confirmed reset anchors from the Mac over SSH (``--ingest``), projects
 future session and weekly cycles from those anchors (``--check``), and sends one
-Telegram DM per trigger reset. It never contacts Claude or Codex and holds no
-provider credentials.
+Telegram alert to each configured destination per trigger reset. It never
+contacts Claude or Codex and holds no provider credentials.
 """
 from __future__ import annotations
 
@@ -42,10 +42,9 @@ def validate_payload(payload: object) -> dict:
         if not isinstance(entry, dict) or not isinstance(entry.get("usage"), dict):
             raise ValueError(f"record for {provider} is missing a usage object")
         usage = entry["usage"]
-        if not isinstance(usage.get("primary"), dict):
-            raise ValueError(f"record for {provider} is missing a primary reset window")
+        usable_window = False
         for slot in ("primary", "secondary"):
-            if slot not in usage:
+            if slot not in usage or usage[slot] is None:
                 continue
             window = usage[slot]
             if not isinstance(window, dict):
@@ -56,6 +55,9 @@ def validate_payload(payload: object) -> dict:
                 raise ValueError(f"{slot} window for {provider} has an invalid resetsAt") from None
             if "windowMinutes" in window and common.window_minutes(window) is None:
                 raise ValueError(f"{slot} window for {provider} has invalid windowMinutes")
+            usable_window = True
+        if not usable_window:
+            raise ValueError(f"record for {provider} has no reset windows")
     updated_at = payload.get("updatedAt")
     if not isinstance(updated_at, str):
         raise ValueError("schedule payload must contain an updatedAt timestamp")
@@ -114,9 +116,15 @@ def run_check(config: dict) -> int:
             records, now, state, config["timezone"], config["providers"]
         )
         if decision.action == "send":
-            common.notify(decision.message)
+            common.deliver_reset_message(
+                state,
+                decision.key,
+                decision.message,
+                lambda updated: common.atomic_json_write(STATE_FILE, updated),
+            )
         if decision.action in ("send", "seed", "expired"):
-            common.atomic_json_write(STATE_FILE, common.mark_sent(state, decision.key))
+            if decision.action != "send":
+                common.atomic_json_write(STATE_FILE, common.mark_sent(state, decision.key))
         elif decision.action == "unavailable":
             trigger = config["providers"][0] if config["providers"] else "trigger provider"
             print(
@@ -138,7 +146,10 @@ def run_status(config: dict) -> int:
     print(f"Last Mac sync: {schedule.get('updatedAt', 'unknown')} ({'fresh' if fresh else 'stale'})")
     for provider in config["providers"]:
         for slot, label in (("primary", "session"), ("secondary", "weekly")):
-            reset_at = common.next_reset(common.get_window(records, provider, slot), now)
+            window = common.get_window(records, provider, slot)
+            if not window:
+                continue
+            reset_at = common.next_reset(window, now)
             when = (
                 reset_at.astimezone(common.config_timezone(config)).isoformat()
                 if reset_at

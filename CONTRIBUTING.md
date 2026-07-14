@@ -36,7 +36,7 @@ Read `AGENTS.md` for the full invariant list before changing logic.
 
 Any change to projection, formatting, deduplication, or config validation needs a test.
 
-Build Telegram payloads with `build_telegram_request()` and assert on the URL and body. When exercising `run_check`, patch `common.notify`. If a test would open a socket, it is wrong.
+Build Telegram payloads with `build_telegram_request()` and assert on the URL and body. When exercising delivery, patch `common.send_telegram` and `common.telegram_credentials`. If a test would open a socket, it is wrong.
 
 Time is injected, never read from the clock inside pure functions — pass `now` explicitly so tests are deterministic.
 

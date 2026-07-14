@@ -1,8 +1,10 @@
 """Configuration loading and validation, including the shipped example file."""
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import common
 from common import ConfigError
@@ -260,15 +262,23 @@ class LoadConfigTests(unittest.TestCase):
 
 class TelegramCredentialTests(unittest.TestCase):
     def test_missing_credentials_raise_without_echoing_values(self):
-        import os
-
-        saved = {k: os.environ.pop(k, None) for k in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")}
-        self.addCleanup(lambda: os.environ.update({k: v for k, v in saved.items() if v is not None}))
-        with self.assertRaises(ConfigError) as ctx:
-            common.telegram_credentials()
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(ConfigError) as ctx:
+                common.telegram_credentials()
         message = str(ctx.exception)
         self.assertIn("TELEGRAM_BOT_TOKEN", message)
         self.assertIn(".env", message)
+
+    def test_multiple_chat_ids_are_parsed_without_duplicates(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "TELEGRAM_BOT_TOKEN": "not-a-real-token",
+                "TELEGRAM_CHAT_IDS": " private , group,private ,, group ",
+            },
+            clear=True,
+        ):
+            self.assertEqual(common.telegram_credentials(), ("not-a-real-token", ("private", "group")))
 
 
 if __name__ == "__main__":

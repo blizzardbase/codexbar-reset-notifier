@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Discover the Telegram chat id for your bot and store it in .env.
+"""Discover Telegram chat ids for your bot and store them in .env.
 
 Send ``/start`` to your bot from the chat you want notifications in, then run
 this script. The bot token is read from .env and is never printed.
@@ -116,9 +116,13 @@ def write_env(path: Path, values: dict) -> None:
 
 def main(argv: Optional[list] = None) -> int:
     """Discover a Telegram chat and persist its id in .env."""
-    parser = argparse.ArgumentParser(description="Save your Telegram chat id to .env")
-    parser.add_argument(
+    parser = argparse.ArgumentParser(description="Save Telegram destination ids to .env")
+    destination = parser.add_mutually_exclusive_group()
+    destination.add_argument(
         "--group", action="store_true", help="use the latest group chat instead of a private chat"
+    )
+    destination.add_argument(
+        "--both", action="store_true", help="save the latest private chat and group chat"
     )
     args = parser.parse_args(argv)
 
@@ -128,12 +132,30 @@ def main(argv: Optional[list] = None) -> int:
     if not token or token == PLACEHOLDER_TOKEN:
         raise ConfigError("Add your BotFather token as TELEGRAM_BOT_TOKEN in .env first.")
 
-    chat = select_chat(fetch_updates(token), args.group)
-    write_env(env_path, {"TELEGRAM_CHAT_ID": str(chat["id"])})
+    updates = fetch_updates(token)
+    if args.both:
+        chats = [select_chat(updates, False), select_chat(updates, True)]
+    else:
+        chats = [select_chat(updates, args.group)]
+    chat_ids = []
+    for chat in chats:
+        chat_id = str(chat["id"])
+        if chat_id not in chat_ids:
+            chat_ids.append(chat_id)
+    write_env(
+        env_path,
+        {
+            "TELEGRAM_CHAT_ID": chat_ids[0],
+            "TELEGRAM_CHAT_IDS": ",".join(chat_ids),
+        },
+    )
 
-    label = chat.get("title") or chat.get("username") or "private chat"
-    print(f"Telegram destination saved: {label} ({chat.get('type')})")
-    print("The chat id was written to .env. Nothing was printed to the terminal.")
+    destinations = ", ".join(
+        f"{chat.get('title') or chat.get('username') or 'private chat'} ({chat.get('type')})"
+        for chat in chats
+    )
+    print(f"Telegram destination(s) saved: {destinations}")
+    print("The chat ids were written to .env. Nothing sensitive was printed to the terminal.")
     return 0
 
 
