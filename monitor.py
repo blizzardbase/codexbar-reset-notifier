@@ -24,7 +24,11 @@ from common import ConfigError
 STATE_FILE = common.DATA_DIR / "state.json"
 
 # Searched in order when config.codexbar_path is null.
-CODEXBAR_FALLBACKS = ("/opt/homebrew/bin/codexbar", "/usr/local/bin/codexbar")
+CODEXBAR_FALLBACKS = (
+    "/opt/homebrew/bin/codexbar",
+    "/usr/local/bin/codexbar",
+    "/Applications/CodexBar.app/Contents/Helpers/CodexBarCLI",
+)
 
 
 def resolve_codexbar(config: dict) -> str:
@@ -120,7 +124,8 @@ def slim_record(entry: dict) -> dict:
     Usage percentages, account emails, and every other field stay on the Mac.
     The VPS never needs them and they would be stale the moment they arrive.
     """
-    usage = entry.get("usage") or {}
+    raw_usage = entry.get("usage")
+    usage = raw_usage if isinstance(raw_usage, dict) else {}
     windows = {}
     for slot in ("primary", "secondary"):
         window = usage.get(slot) or {}
@@ -188,9 +193,15 @@ def notify_locally(config: dict, records: dict, now: datetime) -> str:
         records, now, state, config["timezone"], config["providers"]
     )
     if decision.action == "send":
-        common.notify(decision.message)
+        common.deliver_reset_message(
+            state,
+            decision.key,
+            decision.message,
+            lambda updated: common.atomic_json_write(STATE_FILE, updated),
+        )
     if decision.action in ("send", "seed", "expired"):
-        common.atomic_json_write(STATE_FILE, common.mark_sent(state, decision.key))
+        if decision.action != "send":
+            common.atomic_json_write(STATE_FILE, common.mark_sent(state, decision.key))
     return decision.action
 
 
@@ -214,7 +225,10 @@ def run_status(config: dict) -> int:
     print(f"Mode: {config['notification_mode']}")
     for provider in config["providers"]:
         for slot, label in (("primary", "session"), ("secondary", "weekly")):
-            reset_at = common.next_reset(common.get_window(records, provider, slot), now)
+            window = common.get_window(records, provider, slot)
+            if not window:
+                continue
+            reset_at = common.next_reset(window, now)
             when = (
                 reset_at.astimezone(common.config_timezone(config)).isoformat()
                 if reset_at

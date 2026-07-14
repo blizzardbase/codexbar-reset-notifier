@@ -166,34 +166,29 @@ def build_usage_message(config: dict) -> str:
     for provider in config["providers"]:
         raw_usage = records[provider].get("usage")
         usage = raw_usage if isinstance(raw_usage, dict) else {}
-        sections.append(
-            "\n".join(
-                (
-                    format_usage_window(
-                        provider, "session", usage.get("primary") or {}, now, timezone_name
-                    ),
-                    format_usage_window(
-                        provider,
-                        "weekly",
-                        usage.get("secondary") or {},
-                        now,
-                        timezone_name,
-                        weekly=True,
-                    ),
-                )
+        lines = []
+        primary = usage.get("primary")
+        if isinstance(primary, dict) and primary:
+            lines.append(format_usage_window(provider, "session", primary, now, timezone_name))
+        secondary = usage.get("secondary")
+        if isinstance(secondary, dict) and secondary:
+            lines.append(
+                format_usage_window(provider, "weekly", secondary, now, timezone_name, weekly=True)
             )
-        )
+        sections.append("\n".join(lines) if lines else f"{common.provider_label(provider)}: usage unavailable")
     return heading + "\n\n" + "\n\n".join(sections)
 
 
-def process_update(update: dict, token: str, allowed_chat_id: str, config: dict) -> None:
+def process_update(
+    update: dict, token: str, allowed_chat_ids: Sequence[str], config: dict
+) -> None:
     """Handle one authorized /usage message and ignore everything else."""
     message = update.get("message") if isinstance(update, dict) else None
     if not isinstance(message, dict) or not is_usage_command(message.get("text")):
         return
     chat = message.get("chat")
     chat_id = str(chat.get("id")) if isinstance(chat, dict) and chat.get("id") is not None else ""
-    if chat_id != allowed_chat_id:
+    if chat_id not in allowed_chat_ids:
         return
     try:
         response = build_usage_message(config)
@@ -210,7 +205,7 @@ def process_update(update: dict, token: str, allowed_chat_id: str, config: dict)
 
 
 def poll_once(
-    token: str, offset: int, allowed_chat_id: str, config: dict, timeout: int = 25
+    token: str, offset: int, allowed_chat_ids: Sequence[str], config: dict, timeout: int = 25
 ) -> int:
     """Process one long-poll batch and return the next update offset."""
     next_offset = offset
@@ -218,7 +213,7 @@ def poll_once(
         update_id = update.get("update_id") if isinstance(update, dict) else None
         if not isinstance(update_id, int):
             continue
-        process_update(update, token, allowed_chat_id, config)
+        process_update(update, token, allowed_chat_ids, config)
         next_offset = max(next_offset, update_id + 1)
         write_offset(next_offset)
     return next_offset
@@ -226,17 +221,17 @@ def poll_once(
 
 def run(config: dict, once: bool = False) -> int:
     """Run the command listener until launchd stops it."""
-    token, allowed_chat_id = common.telegram_credentials()
+    token, allowed_chat_ids = common.telegram_credentials()
     offset = read_offset()
     if offset is None:
         offset = prime_offset(token)
         write_offset(offset)
     if once:
-        poll_once(token, offset, allowed_chat_id, config, timeout=0)
+        poll_once(token, offset, allowed_chat_ids, config, timeout=0)
         return 0
     while True:
         try:
-            offset = poll_once(token, offset, allowed_chat_id, config)
+            offset = poll_once(token, offset, allowed_chat_ids, config)
         except Exception as exc:
             print(f"ERROR: usage bot poll failed: {exc}", file=sys.stderr)
             time.sleep(5)

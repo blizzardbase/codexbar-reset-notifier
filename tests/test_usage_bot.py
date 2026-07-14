@@ -131,6 +131,28 @@ class FormattingTests(unittest.TestCase):
         self.assertIn("Codex weekly: 60% left", message)
         self.assertNotIn("account", message.lower())
 
+    def test_weekly_only_codex_does_not_invent_a_session_line(self):
+        records = {
+            "claude": {"usage": {"primary": {"usedPercent": 10, "resetsAt": "2026-07-10T12:00:00Z"}}},
+            "codex": {
+                "usage": {
+                    "primary": None,
+                    "secondary": {"usedPercent": 40, "resetsAt": "2026-07-16T00:00:00Z"},
+                }
+            },
+        }
+
+        def fetch(_executable, provider):
+            return [records[provider]]
+
+        with mock.patch.object(usage_bot.monitor, "resolve_codexbar", return_value="codexbar"):
+            with mock.patch.object(usage_bot.monitor, "fetch_provider", side_effect=fetch):
+                with mock.patch.object(usage_bot, "datetime") as clock:
+                    clock.now.return_value = self.now
+                    message = usage_bot.build_usage_message(CONFIG)
+        self.assertNotIn("Codex session:", message)
+        self.assertIn("Codex weekly: 60% left", message)
+
 
 class UpdateTests(unittest.TestCase):
     @staticmethod
@@ -143,12 +165,18 @@ class UpdateTests(unittest.TestCase):
     def test_authorized_command_replies_only_to_origin(self):
         with mock.patch.object(usage_bot, "build_usage_message", return_value="live usage"):
             with mock.patch.object(usage_bot, "send_message") as send:
-                usage_bot.process_update(self.update(), "token", "123", CONFIG)
+                usage_bot.process_update(self.update(), "token", ("123", "456"), CONFIG)
         send.assert_called_once_with("token", "123", "live usage", reply_to=7)
+
+    def test_second_configured_chat_replies_only_to_that_origin(self):
+        with mock.patch.object(usage_bot, "build_usage_message", return_value="live usage"):
+            with mock.patch.object(usage_bot, "send_message") as send:
+                usage_bot.process_update(self.update("456"), "token", ("123", "456"), CONFIG)
+        send.assert_called_once_with("token", "456", "live usage", reply_to=7)
 
     def test_unconfigured_chat_is_ignored(self):
         with mock.patch.object(usage_bot, "send_message") as send:
-            usage_bot.process_update(self.update("999"), "token", "123", CONFIG)
+            usage_bot.process_update(self.update("999"), "token", ("123", "456"), CONFIG)
         send.assert_not_called()
 
     def test_codexbar_failure_gets_a_friendly_reply(self):
@@ -157,7 +185,7 @@ class UpdateTests(unittest.TestCase):
         ):
             with mock.patch.object(usage_bot, "send_message") as send:
                 with mock.patch.object(usage_bot.sys, "stderr"):
-                    usage_bot.process_update(self.update(), "token", "123", CONFIG)
+                    usage_bot.process_update(self.update(), "token", ("123",), CONFIG)
         self.assertIn("could not read live CodexBar usage", send.call_args.args[2])
 
 
@@ -178,7 +206,7 @@ class OffsetTests(unittest.TestCase):
         with mock.patch.object(usage_bot, "get_updates", return_value=updates):
             with mock.patch.object(usage_bot, "process_update") as process:
                 with mock.patch.object(usage_bot, "write_offset") as write:
-                    result = usage_bot.poll_once("token", 10, "123", CONFIG, timeout=0)
+                    result = usage_bot.poll_once("token", 10, ("123",), CONFIG, timeout=0)
         self.assertEqual(result, 15)
         self.assertEqual(process.call_count, 2)
         self.assertEqual(write.call_args_list, [mock.call(12), mock.call(15)])
@@ -187,7 +215,7 @@ class OffsetTests(unittest.TestCase):
 class ListenerRecoveryTests(unittest.TestCase):
     def test_unexpected_poll_error_retries_without_exiting(self):
         with mock.patch.object(
-            usage_bot.common, "telegram_credentials", return_value=("token", "123")
+            usage_bot.common, "telegram_credentials", return_value=("token", ("123",))
         ):
             with mock.patch.object(usage_bot, "read_offset", return_value=10):
                 with mock.patch.object(

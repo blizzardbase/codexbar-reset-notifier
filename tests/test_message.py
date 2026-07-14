@@ -19,7 +19,9 @@ def stamp(moment):
 
 def records(claude_session, codex_session, claude_weekly=None, codex_weekly=None):
     def entry(session, weekly):
-        usage = {"primary": {"resetsAt": stamp(session), "windowMinutes": 300}}
+        usage = {}
+        if session is not None:
+            usage["primary"] = {"resetsAt": stamp(session), "windowMinutes": 300}
         if weekly is not None:
             usage["secondary"] = {"resetsAt": stamp(weekly), "windowMinutes": 7 * 24 * 60}
         return {"usage": usage}
@@ -30,31 +32,25 @@ def records(claude_session, codex_session, claude_weekly=None, codex_weekly=None
     }
 
 
-class CountdownTests(unittest.TestCase):
-    def test_claude_to_codex_countdown_is_calculated_dynamically(self):
+class WeeklyOnlyCodexTests(unittest.TestCase):
+    def test_codex_countdown_is_not_sent_even_if_an_old_record_has_one(self):
         payload = records(NOW - timedelta(seconds=30), NOW + timedelta(minutes=11))
         message = common.build_reset_message(payload, NOW, "Asia/Dubai", PROVIDERS)
         self.assertIn("Claude session reset has happened.", message)
-        self.assertIn("Codex will reset in about 11 minutes.", message)
+        self.assertNotIn("Codex will reset", message)
+        self.assertNotIn("minute", message)
 
-    def test_countdown_changes_with_the_data(self):
-        payload = records(NOW, NOW + timedelta(minutes=42))
+    def test_codex_can_report_weekly_only(self):
+        payload = records(
+            NOW,
+            None,
+            claude_weekly=NOW + timedelta(days=2),
+            codex_weekly=NOW + timedelta(days=6),
+        )
         message = common.build_reset_message(payload, NOW, "UTC", PROVIDERS)
-        self.assertIn("about 42 minutes", message)
-
-    def test_single_minute_is_not_pluralised(self):
-        payload = records(NOW, NOW + timedelta(seconds=70))
-        self.assertIn("about 1 minute.", common.build_reset_message(payload, NOW, "UTC", PROVIDERS))
-
-    def test_countdown_never_reports_zero_minutes(self):
-        payload = records(NOW, NOW + timedelta(seconds=1))
-        self.assertIn("about 1 minute.", common.build_reset_message(payload, NOW, "UTC", PROVIDERS))
-
-    def test_companion_without_data_is_simply_omitted(self):
-        payload = {"claude": {"usage": {"primary": {"resetsAt": stamp(NOW), "windowMinutes": 300}}}}
-        message = common.build_reset_message(payload, NOW, "UTC", PROVIDERS)
-        self.assertEqual(message, "Claude session reset has happened.")
-        self.assertNotIn("Codex", message)
+        self.assertIn("Claude weekly reset:", message)
+        self.assertIn("Codex weekly reset:", message)
+        self.assertNotIn("Codex session", message)
 
 
 class WeeklyLineTests(unittest.TestCase):
@@ -69,7 +65,7 @@ class WeeklyLineTests(unittest.TestCase):
         lines = message.split("\n")
         self.assertEqual(
             lines[0],
-            "Claude session reset has happened. Codex will reset in about 11 minutes.",
+            "Claude session reset has happened.",
         )
         self.assertEqual(lines[1], "")
         self.assertTrue(lines[2].startswith("Claude weekly reset: "))

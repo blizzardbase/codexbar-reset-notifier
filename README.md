@@ -1,8 +1,8 @@
 # CodexBar Reset Notifier
 
-Get one private Telegram message the moment your Claude session limit resets — even when your Mac is asleep or switched off.
+Get one Telegram alert per configured destination the moment your Claude session limit resets — even when your Mac is asleep or switched off.
 
-The message also tells you how many minutes until Codex resets, and when both weekly limits roll over. While your Mac is awake, send `/usage` to the bot for a live Claude and Codex usage snapshot.
+The alert includes Claude and Codex weekly reset times. CodexBar may report no Codex session window; the notifier never invents one. While your Mac is awake, send `/usage` to the bot for a live Claude and Codex usage snapshot.
 
 **No AI tokens are consumed.** This project never calls Claude, Codex, an LLM, or any paid AI API. It is plain Python, SSH, cron, the CodexBar CLI, and the Telegram Bot API.
 
@@ -13,13 +13,13 @@ The message also tells you how many minutes until Codex resets, and when both we
 ## What you get
 
 ```text
-Claude session reset has happened. Codex will reset in about 11 minutes.
+Claude session reset has happened.
 
 Claude weekly reset: 7:59 PM, Sun New York time (2 days 11 hours)
 Codex weekly reset: 4:00 AM, Fri New York time (6 days 19 hours)
 ```
 
-Every number is calculated fresh. There is no hard-coded gap between Claude and Codex, no 15-minute warning, no separate Codex message, and no usage percentages. One reset, one message.
+Every number is calculated fresh. There is no made-up Codex session countdown, no 15-minute warning, no separate Codex message, and no usage percentages. One Claude reset produces one alert in each configured Telegram destination.
 
 When you want a live snapshot, send `/usage` in the configured Telegram chat:
 
@@ -29,11 +29,10 @@ Live CodexBar usage — 12:00 PM, Fri New York time
 Claude session: 33% left; resets 3:18 PM, Fri (3h 18m)
 Claude weekly: 81% left; resets 8:00 PM, Sun (2 days 8 hours)
 
-Codex session: 67% left; resets 3:28 PM, Fri (3h 28m)
 Codex weekly: 74% left; resets 4:00 AM, Fri (6 days 16 hours)
 ```
 
-The command also accepts `/usage bot` and Telegram's `/usage@your_bot_username` form. It replies only in the configured chat and consumes no AI tokens.
+The command also accepts `/usage bot` and Telegram's `/usage@your_bot_username` form. It replies only to the originating configured chat and consumes no AI tokens. A missing Codex session is omitted rather than shown as a fake unavailable limit.
 
 ---
 
@@ -65,15 +64,15 @@ You can skip the VPS entirely (see **Local-only mode**), but then notifications 
              │                                                            │
              └──────────────────────► Telegram ◄───────────────────────────┘
                                                                          ▼
-                                                                  Telegram DM
+                                                           Telegram DM / group
 ```
 
 1. A macOS LaunchAgent runs `monitor.py` every five minutes.
 2. `monitor.py` asks the CodexBar CLI for Claude and Codex reset data.
 3. It sends only the reset anchors and window lengths to the VPS over SSH.
 4. VPS cron runs `vps_notifier.py --check` every minute.
-5. At each Claude reset the VPS sends one Telegram DM and records it, so it is never sent twice.
-6. A second Mac LaunchAgent listens for `/usage`, reads CodexBar live, and replies in the configured chat.
+5. At each Claude reset the VPS sends one alert to each configured Telegram destination and records each delivery, so retries do not duplicate a successful chat.
+6. A second Mac LaunchAgent listens for `/usage`, reads CodexBar live, and replies only in the originating configured chat.
 7. The next Mac sync overwrites the anchors with live data, correcting any drift.
 
 ---
@@ -82,7 +81,7 @@ You can skip the VPS entirely (see **Local-only mode**), but then notifications 
 
 - Your Claude and Codex credentials never leave your Mac. The VPS has none.
 - The VPS receives only `resetsAt` timestamps and `windowMinutes` integers.
-- Usage percentages never go to the VPS. They are sent only to your configured Telegram chat when you explicitly request `/usage`.
+- Usage percentages never go to the VPS. They are sent only to the configured Telegram chat that explicitly requests `/usage`.
 - Account emails, prompts, conversations, and code are never transmitted.
 - Telegram credentials live only in `.env`, which is git-ignored on both machines.
 - The VPS opens no inbound ports. All traffic is outbound: your Mac connects to it over SSH; it connects to Telegram over HTTPS.
@@ -107,7 +106,7 @@ On a minimal Linux VPS, make sure the system `tzdata` package is present — Pyt
 Install CodexBar and open it once so Claude and Codex sign in. Then check the CLI answers:
 
 ```bash
-codexbar --provider claude --format json --json-only
+codexbar usage --provider claude --format json --json-only
 ```
 
 If that prints JSON containing `resetsAt`, you are ready. If `codexbar` is not on your `PATH`, note its full path — you will put it in `config.json` as `codexbar_path`.
@@ -140,6 +139,7 @@ Open `.env` and paste your BotFather token:
 
 ```ini
 TELEGRAM_BOT_TOKEN=PASTE_BOT_TOKEN_HERE
+TELEGRAM_CHAT_IDS=
 TELEGRAM_CHAT_ID=
 ```
 
@@ -149,12 +149,18 @@ Now let the tool find your chat id. Make sure you pressed **Start** in the bot c
 python3 configure_telegram.py
 ```
 
-It writes `TELEGRAM_CHAT_ID` into `.env` for you and prints nothing sensitive.
+It writes `TELEGRAM_CHAT_IDS` (and the legacy `TELEGRAM_CHAT_ID` fallback) into `.env` for you and prints no chat ids.
 
 To use a group instead, add the bot to the group, send `/start` there, and run:
 
 ```bash
 python3 configure_telegram.py --group
+```
+
+To send alerts to both your private chat and a group, send `/start` in both and run:
+
+```bash
+python3 configure_telegram.py --both
 ```
 
 Finally, open `config.json` and set at least your `timezone` (an [IANA name](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) such as `America/New_York` or `Europe/London`).
@@ -175,7 +181,7 @@ python3 monitor.py --validate-config
 /usage@your_bot_username
 ```
 
-The bot reads CodexBar at request time and returns current session and weekly percentages, reset times, and countdowns. It ignores commands from every chat except `TELEGRAM_CHAT_ID`. The VPS is not involved because it deliberately does not receive usage percentages.
+The bot reads CodexBar at request time and returns every live window that CodexBar reports. It ignores commands from every chat except the comma-separated `TELEGRAM_CHAT_IDS` list (or legacy `TELEGRAM_CHAT_ID`). The VPS is not involved because it deliberately does not receive usage percentages.
 
 ---
 
@@ -254,15 +260,16 @@ Secrets live in `.env`. Everything else lives in `config.json`.
 | Key | Meaning |
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | The token from BotFather. |
-| `TELEGRAM_CHAT_ID` | Your authorized private or group chat id. Filled in by `configure_telegram.py`. |
+| `TELEGRAM_CHAT_IDS` | Comma-separated authorized private and/or group chat ids. Filled in by `configure_telegram.py`. |
+| `TELEGRAM_CHAT_ID` | Backwards-compatible single-destination fallback. |
 
 ### `config.json`
 
 | Key | Meaning |
 | --- | --- |
 | `timezone` | IANA timezone used to render reset times, e.g. `America/New_York`. |
-| `providers` | Ordered list. The **first** provider triggers the notification; the **second** is the one counted down to. |
-| `codexbar_path` | Full path to the `codexbar` binary, or `null` to search `PATH` and the usual Homebrew locations. |
+| `providers` | Ordered list. The **first** provider's session window triggers the notification; every provider contributes a weekly line when it reports one. |
+| `codexbar_path` | Full path to the `codexbar` binary, or `null` to search `PATH`, Homebrew locations, and CodexBar's app-bundle helper. |
 | `notification_mode` | `"local"` or `"vps"`. |
 | `vps_host` | SSH host alias or hostname. Required in `vps` mode. |
 | `vps_user` | SSH username, or `""` when the alias supplies it. |
@@ -300,9 +307,9 @@ python3 -m unittest discover -v
 
 ## How offline projection works
 
-Each provider reports two things per window: when it next resets (`resetsAt`, the *anchor*) and how long the window lasts (`windowMinutes`).
+Each provider can report one or more windows, each with when it next resets (`resetsAt`, the *anchor*) and how long the window lasts (`windowMinutes`). Claude's session window is the trigger. Codex can legitimately report only its weekly window.
 
-Given those, the next reset after any moment is pure arithmetic — repeatedly add the window length to the anchor until you land in the future. The VPS does exactly that, once a minute, for both the session window and the weekly window. No interval is ever assumed; if a provider stops reporting `windowMinutes`, that line is dropped rather than guessed.
+Given those, the next reset after any moment is pure arithmetic — repeatedly add the window length to the anchor until you land in the future. The VPS does exactly that once a minute for the windows it receives. No interval is ever assumed; a missing window is omitted rather than guessed.
 
 **The assumption you are relying on:** the VPS projects future resets from the last confirmed provider anchor and window length. If the provider changes its schedule while your Mac is offline, the projection may temporarily drift. The next live Mac sync corrects it.
 
@@ -314,6 +321,7 @@ In practice the Mac syncs every five minutes whenever it is awake, so drift is b
 
 - **Projection drift.** While the Mac is offline the VPS cannot learn about a provider-side schedule change. It self-corrects on the next sync.
 - **Weekly line needs an interval.** If a provider reports a weekly `resetsAt` without `windowMinutes`, the weekly line survives until that timestamp passes, then disappears rather than being guessed.
+- **A provider may omit a session window.** CodexBar can return `usage.primary: null` for Codex. This is valid: the Claude session trigger and any available weekly lines continue to work.
 - **Two-minute grace window.** A reset is announced only if the VPS notices it within two minutes. If the VPS is down longer than that, the reset is recorded silently and the next one is announced normally. No late or duplicate alerts.
 - **First run is silent.** On a brand-new install the current cycle is adopted without notifying, so you are not messaged about a reset that happened before you installed anything.
 - **Cron granularity.** cron's `*/N` step restarts every hour, so an N that does not divide 60 (seven minutes, say) leaves an irregular gap across each hour boundary. Only divisors of 60 are accepted, plus 60 itself for an hourly check. Anything else is rejected at validation time rather than silently misbehaving.
@@ -329,10 +337,10 @@ In practice the Mac syncs every five minutes whenever it is awake, so drift is b
 ## Troubleshooting
 
 **No message ever arrives.**
-Run `./scripts/test_notification.sh`. If it fails, the problem is Telegram configuration, not scheduling. Confirm you pressed **Start** in the bot chat and that `.env` has both values.
+Run `./scripts/test_notification.sh`. If it fails, the problem is Telegram configuration, not scheduling. Confirm you pressed **Start** in every configured bot chat and that `.env` has the bot token plus a destination value.
 
 **`codexbar CLI was not found`.**
-Set `codexbar_path` in `config.json` to the binary's full path. Under a LaunchAgent the `PATH` is minimal, which is why `/opt/homebrew/bin` and `/usr/local/bin` are searched explicitly.
+Set `codexbar_path` in `config.json` to the binary's full path. Under a LaunchAgent the `PATH` is minimal, which is why Homebrew paths and CodexBar's app-bundle helper are searched explicitly.
 
 **The LaunchAgent is not running.**
 ```bash

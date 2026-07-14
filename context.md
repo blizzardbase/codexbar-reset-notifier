@@ -4,7 +4,7 @@ Handoff document for future sessions and agents. Read this before changing anyth
 
 ## The problem
 
-Claude's session window resets on a fixed cycle. If you do not notice the reset, paused work sits idle for hours. Codex resets a little afterwards on its own cycle.
+Claude's session window resets on a fixed cycle. If you do not notice the reset, paused work sits idle for hours. CodexBar can report Codex as weekly-only, so this project must never assume a Codex session reset exists.
 
 A notifier that runs only on a Mac is useless here: the reset that matters most happens overnight, while the Mac is asleep or off. Whatever watches the clock has to be awake when the user is not.
 
@@ -12,9 +12,9 @@ CodexBar already exposes the exact reset timestamps as structured JSON, so no sc
 
 ## Final product decisions
 
-**One combined notification, not three.** Early designs sent a 15-minute warning, a Claude reset alert, and a separate Codex reset alert. Three interruptions per cycle trained the user to ignore all of them. The signal that matters is *"you can work again now"*, and that is the Claude reset. Codex resets shortly after, so its countdown rides along in the same message rather than earning its own ping. The weekly lines answer the natural follow-up question ("how much runway is left?") without a second message.
+**One combined notification, not three.** Early designs sent a 15-minute warning, a Claude reset alert, and a separate Codex reset alert. Three interruptions per cycle trained the user to ignore all of them. The signal that matters is *"you can work again now"*, and that is the Claude reset. The alert includes available weekly reset lines; it does not invent a Codex session countdown.
 
-**Telegram private DM, not a macOS notification.** A macOS notification cannot appear while the Mac is off, which is the only case that matters. A Telegram DM reaches the phone, supports a custom per-chat notification sound so the alert is recognisable without reading it, and needs no inbound port or push infrastructure. macOS notifications were dropped entirely rather than kept as a confusing second channel.
+**Telegram destinations, not a macOS notification.** A macOS notification cannot appear while the Mac is off, which is the only case that matters. Telegram private chats and groups reach the phone, support custom per-chat notification sounds, and need no inbound port or push infrastructure. macOS notifications are test-only.
 
 **VPS projection, not a cloud service or a polling phone app.** The VPS is the cheapest way to own an always-on clock. It deliberately holds no Claude or Codex credentials: it receives the last confirmed anchor and the window length, then repeats the cycle. That keeps the trust boundary tight — a compromised VPS leaks reset times and a Telegram token, nothing more — and it means the notifier keeps working through a Mac outage of any length.
 
@@ -22,14 +22,14 @@ CodexBar already exposes the exact reset timestamps as structured JSON, so no sc
 
 **Live usage is request-only and Mac-local.** `/usage` reads CodexBar at the moment the command arrives and replies only in the configured Telegram chat. The percentages never enter the VPS schedule; if the Mac is unavailable, the command cannot answer.
 
-**No hard-coded intervals.** Both providers currently report 300-minute session windows, but the code never assumes it. `windowMinutes` from the provider drives every projection. If a provider stops reporting it and the anchor has passed, the window is declared unavailable rather than guessed.
+**No hard-coded intervals.** `windowMinutes` from the provider drives every projection. The Claude primary window is the session trigger. Codex can omit `primary` entirely and still supply a weekly `secondary` window. If a reported window stops including its interval and its anchor has passed, that window is unavailable rather than guessed.
 
 ## Current architecture
 
 - `common.py` holds every rule: config validation, cycle projection, message formatting, atomic JSON writes, Telegram payload construction. Both halves import it, so behavior cannot diverge.
 - `monitor.py` runs on the Mac under a LaunchAgent every `mac_sync_interval_seconds` (default 300). It reads CodexBar, reduces each record to `resetsAt` + `windowMinutes`, and ships that over SSH.
-- `usage_bot.py` runs under a second Mac LaunchAgent, long-polls Telegram, accepts `/usage` only from `TELEGRAM_CHAT_ID`, and formats fresh CodexBar session and weekly usage.
-- `vps_notifier.py` runs on the VPS under cron every `vps_check_interval_seconds` (default 60). It projects both cycles forward, decides whether a reset just happened, sends at most one Telegram DM, and records the reset.
+- `usage_bot.py` runs under a second Mac LaunchAgent, long-polls Telegram, accepts `/usage` only from configured destination ids, and formats only fresh windows CodexBar actually reports.
+- `vps_notifier.py` runs on the VPS under cron every `vps_check_interval_seconds` (default 60). It projects the trigger session plus every available weekly window, sends one alert per configured destination, and records successful per-chat delivery.
 - Deduplication keys on the ISO timestamp of the trigger provider's last reset. The same reset can never be announced twice.
 - `evaluate_reset()` returns one of `send`, `seed`, `duplicate`, `expired`, `unavailable`. It is pure; only the caller writes state.
 
@@ -37,11 +37,11 @@ CodexBar already exposes the exact reset timestamps as structured JSON, so no sc
 
 Secrets and settings are strictly separated.
 
-- `.env` — `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. Git-ignored. Mode `600` on both machines. Nothing else belongs here.
+- `.env` — `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_IDS` (comma-separated), with legacy `TELEGRAM_CHAT_ID` support. Git-ignored. Mode `600` on both machines. Nothing else belongs here.
 - `config.json` — timezone, providers, CodexBar path or discovery, notification mode, VPS host/user/remote dir, both intervals, stale-data threshold. Git-ignored, because it holds a real hostname and path.
 - `config.example.json` — the same keys with placeholders. Committed. Must never contain a real host, user, path, or credential.
 
-`providers` is ordered: the first entry triggers the notification, the second is the one counted down to.
+`providers` is ordered: the first entry triggers the notification. Every provider supplies a weekly line only when its data contains one.
 
 Every value passes `common.validate_config()` before any install, deploy, or run, so a typo fails loudly at setup instead of silently at 3 a.m.
 

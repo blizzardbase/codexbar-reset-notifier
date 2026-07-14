@@ -4,7 +4,7 @@ Instructions for any AI agent or contributor changing this repository.
 
 ## Product purpose
 
-Deliver exactly one Telegram message when the Claude session window resets, including a dynamically calculated countdown to the Codex reset and both weekly reset times. It must keep working while the user's Mac is asleep or powered off. While the Mac is awake, an authorized `/usage` command returns live session and weekly usage to the configured chat.
+Deliver one Telegram alert to each configured destination when the Claude session window resets, including the available Claude and Codex weekly reset times. Codex may report no session window; never invent one or show a Codex countdown. It must keep working while the user's Mac is asleep or powered off. While the Mac is awake, an authorized `/usage` command returns each live window CodexBar reports to the originating configured chat.
 
 This is a deterministic utility. It consumes **no** LLM, AI, or paid API tokens. Any change that introduces an AI call, a model API, or a Codex-automation dependency is out of scope and must be rejected.
 
@@ -33,7 +33,7 @@ Two halves that share one module.
 
 ## Source-of-truth rules
 
-- The Mac is authoritative whenever it is online. CodexBar's `usage.primary.resetsAt` is the session anchor; `usage.secondary.resetsAt` is the weekly anchor.
+- The Mac is authoritative whenever it is online. The trigger provider's `usage.primary.resetsAt` is the session anchor; a provider's `usage.secondary.resetsAt` is its weekly anchor. A non-trigger provider may legitimately omit `usage.primary` (Codex currently does for this account type).
 - `windowMinutes` is the repeating interval. **Never hard-code five hours, seven days, or any other interval.** If a provider stops reporting `windowMinutes` and its anchor has passed, the window is unprojectable and must be reported as unavailable, not guessed.
 - The VPS projects forward from the last confirmed anchor. Every live Mac sync overwrites the anchors, correcting drift.
 - Only reset metadata crosses from the Mac to the VPS. `monitor.slim_record()` strips usage percentages, account emails, and everything else. Do not widen it. A live percentage may leave the Mac only in the `/usage` reply to the configured Telegram chat.
@@ -42,9 +42,9 @@ Two halves that share one module.
 - CodexBar reports provider failures as a JSON `error` object on **stdout**, sometimes with exit 0. `run_codexbar()` checks both and raises `CodexbarError` carrying CodexBar's own message. **Never downgrade or swallow a provider error** — an expired-credentials failure must not be reinterpreted as anything benign.
 ## Security boundaries
 
-- Secrets live only in `.env` (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`). Never in `config.json`, never in code, never in logs.
+- Secrets live only in `.env` (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_IDS`, with `TELEGRAM_CHAT_ID` as a legacy fallback). Never in `config.json`, never in code, never in logs.
 - Never print, echo, or interpolate a token into an error message, a log line, or a commit.
-- `/usage` must respond only when the incoming chat id exactly matches `TELEGRAM_CHAT_ID`; every other chat is ignored without a reply.
+- `/usage` must respond only when the incoming chat id matches a configured `TELEGRAM_CHAT_IDS` value (or legacy `TELEGRAM_CHAT_ID`); every other chat is ignored without a reply.
 - Live usage percentages may be returned to the authorized Telegram chat, but must never be added to the Mac-to-VPS payload.
 - No inbound VPS ports. Mac→VPS is outbound SSH with `BatchMode=yes`. VPS→Telegram is outbound HTTPS.
 - No `sudo`. Nothing writes outside `vps_remote_dir` on the VPS or `~/Library/LaunchAgents` on the Mac.
@@ -62,19 +62,19 @@ Two halves that share one module.
 
 ## Notification behavior
 
-- One message per trigger reset. The first entry of `providers` is the trigger; the second is the countdown companion.
+- One alert per configured destination per trigger reset. The first entry of `providers` is the trigger. Other providers add weekly lines only when they report them.
 - The exact production shape:
 
   ```text
-  Claude session reset has happened. Codex will reset in about N minutes.
+  Claude session reset has happened.
 
   Claude weekly reset: TIME, DAY LOCAL_TIMEZONE (N days N hours)
   Codex weekly reset: TIME, DAY LOCAL_TIMEZONE (N days N hours)
   ```
 
-- `N` is always computed. No hard-coded Claude-to-Codex gap.
-- No 15-minute warning. No separate Codex-reset message. No usage percentages.
+- No Codex session countdown. No 15-minute warning. No separate Codex-reset message. No usage percentages.
 - Deduplication key is the ISO timestamp of the trigger's last reset, stored under `resetsSent.trigger`.
+- Partial multi-destination delivery is stored under `resetsSent.pendingDelivery`; retry only the destination that failed.
 - Decision table in `common.evaluate_reset()`: `send`, `seed` (first run, adopt silently), `duplicate`, `expired` (older than `RESET_GRACE_SECONDS`, record without announcing), `unavailable`.
 - `evaluate_reset()` is pure. Only `mark_sent()` mutates state, and only the caller writes it.
 - Staleness never silences a notification. A stale schedule warns on stderr and still projects — offline continuation is the point.
@@ -84,9 +84,9 @@ Two halves that share one module.
 ## Testing requirements
 
 - `unittest` only. No third-party test dependencies.
-- **No test may perform network access or send a real Telegram message.** Build payloads with `build_telegram_request()`; patch `common.notify` when exercising `run_check`.
+- **No test may perform network access or send a real Telegram message.** Build payloads with `build_telegram_request()`; patch `common.send_telegram` and credentials when exercising delivery.
 - Any change to projection, formatting, deduplication, or config validation needs a test.
-- Keep coverage of: session projection per provider, differing window lengths, weekly projection, the Claude→Codex countdown, day/hour formatting, timezone conversion, DST behavior, duplicate prevention, anchor correction, offline continuation, stale data, missing provider data, invalid JSON, invalid config, atomic writes, and Telegram payload construction.
+- Keep coverage of: trigger-session projection, missing Codex primary windows, weekly projection, no Codex countdown, day/hour formatting, timezone conversion, DST behavior, duplicate prevention, per-destination retry, anchor correction, offline continuation, stale data, invalid JSON, invalid config, atomic writes, and Telegram payload construction.
 
 ## Commands to run before changing code
 

@@ -1,9 +1,11 @@
 """Telegram setup helpers; network access is always mocked."""
 
 import stat
+import io
 import tempfile
 import unittest
 import urllib.error
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -98,6 +100,30 @@ class TelegramUpdateTests(unittest.TestCase):
                     with self.assertRaises(RuntimeError) as ctx:
                         configure_telegram.fetch_updates(token)
                 self.assertNotIn(token, str(ctx.exception))
+
+
+class ConfigureBothDestinationsTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / ".env"
+        self.path.write_text("TELEGRAM_BOT_TOKEN=test-token\n")
+
+    def test_both_saves_private_and_group_without_printing_ids(self):
+        updates = [
+            {"message": {"chat": {"id": "private-id", "type": "private", "username": "me"}}},
+            {"message": {"chat": {"id": "group-id", "type": "group", "title": "team"}}},
+        ]
+        output = io.StringIO()
+        with mock.patch.object(configure_telegram.common, "ENV_FILE", self.path):
+            with mock.patch.object(configure_telegram, "fetch_updates", return_value=updates):
+                with redirect_stdout(output):
+                    self.assertEqual(configure_telegram.main(["--both"]), 0)
+        values = configure_telegram.read_env_pairs(self.path)
+        self.assertEqual(values["TELEGRAM_CHAT_ID"], "private-id")
+        self.assertEqual(values["TELEGRAM_CHAT_IDS"], "private-id,group-id")
+        self.assertNotIn("private-id", output.getvalue())
+        self.assertNotIn("group-id", output.getvalue())
 
 
 if __name__ == "__main__":

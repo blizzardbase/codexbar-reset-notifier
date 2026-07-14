@@ -20,7 +20,7 @@ import urllib.request
 from collections import namedtuple
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional, Sequence, Tuple
+from typing import Any, Callable, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 ROOT = Path(__file__).resolve().parent
@@ -102,20 +102,38 @@ def load_env(path: Path = ENV_FILE) -> None:
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-def telegram_credentials() -> Tuple[str, str]:
-    """Return (bot token, chat id) from the environment."""
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-    missing = [
-        name
-        for name, value in (("TELEGRAM_BOT_TOKEN", token), ("TELEGRAM_CHAT_ID", chat_id))
-        if not value
-    ]
-    if missing:
+def telegram_chat_ids() -> Tuple[str, ...]:
+    """Return configured Telegram destinations in stable, duplicate-free order.
+
+    ``TELEGRAM_CHAT_IDS`` supports a comma-separated private-chat and group
+    setup. ``TELEGRAM_CHAT_ID`` remains a backwards-compatible fallback for
+    existing installs that have one destination.
+    """
+    configured = os.environ.get("TELEGRAM_CHAT_IDS", "")
+    candidates = (
+        configured.split(",")
+        if configured.strip()
+        else [os.environ.get("TELEGRAM_CHAT_ID", "")]
+    )
+    chat_ids = []
+    for candidate in candidates:
+        chat_id = candidate.strip()
+        if chat_id and chat_id not in chat_ids:
+            chat_ids.append(chat_id)
+    if not chat_ids:
         raise ConfigError(
-            f"{' and '.join(missing)} not set. Add them to .env (see .env.example)."
+            "TELEGRAM_CHAT_IDS (or legacy TELEGRAM_CHAT_ID) not set. "
+            "Add it to .env (see .env.example)."
         )
-    return token, chat_id
+    return tuple(chat_ids)
+
+
+def telegram_credentials() -> Tuple[str, Tuple[str, ...]]:
+    """Return ``(bot token, configured chat ids)`` from the environment."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        raise ConfigError("TELEGRAM_BOT_TOKEN not set. Add it to .env (see .env.example).")
+    return token, telegram_chat_ids()
 
 
 def load_config(path: Optional[Path] = None) -> dict:
@@ -427,25 +445,15 @@ def build_reset_message(
 ) -> str:
     """Build the single production notification sent at each trigger reset.
 
-    The first entry of ``providers`` is the trigger (Claude). The second, when
-    present, is the companion whose countdown is calculated dynamically.
+    The first entry of ``providers`` is the trigger (normally Claude). Other
+    providers contribute weekly lines only: a provider may legitimately omit a
+    session window, as Codex currently does for this account type.
     """
     if not providers:
         raise ValueError("at least one provider is required")
 
     trigger = providers[0]
-    sentences = [f"{provider_label(trigger)} session reset has happened."]
-
-    if len(providers) > 1:
-        companion = providers[1]
-        companion_reset = next_reset(get_window(records, companion, "primary"), now)
-        if companion_reset is not None:
-            minutes = max(1, round((companion_reset - now).total_seconds() / 60))
-            sentences.append(
-                f"{provider_label(companion)} will reset in about {minutes} {_plural('minute', minutes)}."
-            )
-
-    headline = " ".join(sentences)
+    headline = f"{provider_label(trigger)} session reset has happened."
     weekly = weekly_lines(records, now, timezone_name, providers)
     return headline + "\n\n" + "\n".join(weekly) if weekly else headline
 
@@ -484,7 +492,48 @@ def evaluate_reset(
 
 def mark_sent(state: dict, key: str) -> dict:
     """Record the trigger reset key in a mutable state mapping."""
-    state.setdefault("resetsSent", {})["trigger"] = key
+    resets_sent = state.setdefault("resetsSent", {})
+    resets_sent["trigger"] = key
+    # A partial multi-destination delivery is relevant only to the current
+    # reset. Once the reset is fully handled (or adopted silently), discard it.
+    resets_sent.pop("pendingDelivery", None)
+    return state
+
+
+def undelivered_chat_ids(state: dict, key: str, chat_ids: Sequence[str]) -> Tuple[str, ...]:
+    """Return destinations that have not yet received ``key``.
+
+    A delivery can fail after one Telegram destination succeeds. Persisting
+    these acknowledgements lets the next cron run retry only the failed chat
+    instead of duplicating the alert in the successful one.
+    """
+    resets_sent = state.get("resetsSent") if isinstance(state, dict) else None
+    pending = resets_sent.get("pendingDelivery") if isinstance(resets_sent, dict) else None
+    if not isinstance(pending, dict) or pending.get("key") != key:
+        delivered = set()
+    else:
+        delivered_values = pending.get("chatIds")
+        delivered = (
+            {chat_id for chat_id in delivered_values if isinstance(chat_id, str)}
+            if isinstance(delivered_values, list)
+            else set()
+        )
+    return tuple(chat_id for chat_id in chat_ids if chat_id not in delivered)
+
+
+def mark_chat_delivered(state: dict, key: str, chat_id: str) -> dict:
+    """Record one successful Telegram delivery for an in-progress reset."""
+    resets_sent = state.setdefault("resetsSent", {})
+    pending = resets_sent.get("pendingDelivery")
+    if not isinstance(pending, dict) or pending.get("key") != key:
+        pending = {"key": key, "chatIds": []}
+        resets_sent["pendingDelivery"] = pending
+    delivered = pending.get("chatIds")
+    if not isinstance(delivered, list):
+        delivered = []
+        pending["chatIds"] = delivered
+    if chat_id not in delivered:
+        delivered.append(chat_id)
     return state
 
 
@@ -534,9 +583,28 @@ def send_telegram(token: str, chat_id: str, message: str) -> None:
 
 
 def notify(message: str) -> None:
-    """Load Telegram credentials and send one notification."""
-    token, chat_id = telegram_credentials()
-    send_telegram(token, chat_id, message)
+    """Load Telegram credentials and send a direct test message to every destination."""
+    token, chat_ids = telegram_credentials()
+    for chat_id in chat_ids:
+        send_telegram(token, chat_id, message)
+
+
+def deliver_reset_message(
+    state: dict, key: str, message: str, save_state: Callable[[dict], None]
+) -> None:
+    """Deliver a reset message once per destination and persist partial progress.
+
+    ``save_state`` must atomically persist ``state``. It is called after every
+    successful chat delivery so a transient Telegram failure can be retried
+    without duplicating alerts in other configured chats.
+    """
+    token, chat_ids = telegram_credentials()
+    for chat_id in undelivered_chat_ids(state, key, chat_ids):
+        send_telegram(token, chat_id, message)
+        mark_chat_delivered(state, key, chat_id)
+        save_state(state)
+    mark_sent(state, key)
+    save_state(state)
 
 
 # ---------------------------------------------------------------------------

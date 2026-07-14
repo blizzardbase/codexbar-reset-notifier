@@ -205,11 +205,18 @@ class IngestTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self._ingest(json.dumps({"updatedAt": stamp(NOW), "records": {"claude": "nope"}}))
 
-    def test_payload_with_missing_primary_window_is_rejected(self):
+    def test_payload_without_any_windows_is_rejected(self):
         payload = {"updatedAt": stamp(NOW), "records": {"claude": {"usage": {}}}}
         with self.assertRaises(RuntimeError):
             self._ingest(json.dumps(payload))
         self.assertFalse(self.schedule.exists())
+
+    def test_payload_allows_codex_weekly_without_a_session_window(self):
+        payload = sample_records()
+        del payload["codex"]["usage"]["primary"]
+        self.assertEqual(self._ingest(json.dumps({"updatedAt": stamp(NOW), "records": payload})), 0)
+        stored = json.loads(self.schedule.read_text())
+        self.assertNotIn("primary", stored["records"]["codex"]["usage"])
 
     def test_payload_with_invalid_reset_timestamp_is_rejected(self):
         for resets_at in (None, 123, "not-a-date"):
@@ -260,7 +267,12 @@ class VpsCheckTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.sent = []
-        patcher = mock.patch.object(common, "notify", side_effect=self.sent.append)
+        patcher = mock.patch.object(
+            common, "telegram_credentials", return_value=("test-token", ("private", "group"))
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(common, "send_telegram", side_effect=self._record_delivery)
         patcher.start()
         self.addCleanup(patcher.stop)
         self.config = {
@@ -268,6 +280,9 @@ class VpsCheckTests(unittest.TestCase):
             "providers": ["claude", "codex"],
             "stale_data_minutes": 30,
         }
+
+    def _record_delivery(self, _token, chat_id, message):
+        self.sent.append((chat_id, message))
 
     def write_schedule(self, updated_at=None):
         common.atomic_json_write(
@@ -290,17 +305,41 @@ class VpsCheckTests(unittest.TestCase):
         self.write_schedule()
         common.atomic_json_write(self.state, {"resetsSent": {"trigger": "older-key"}})
         vps_notifier.run_check(self.config)
-        self.assertEqual(len(self.sent), 1)
-        self.assertIn("Claude session reset has happened.", self.sent[0])
+        self.assertEqual(len(self.sent), 2)
+        self.assertEqual({chat_id for chat_id, _ in self.sent}, {"private", "group"})
+        self.assertTrue(all("Claude session reset has happened." in message for _, message in self.sent))
 
         vps_notifier.run_check(self.config)
-        self.assertEqual(len(self.sent), 1, "the same reset must never be announced twice")
+        self.assertEqual(len(self.sent), 2, "the same reset must never be announced twice")
 
     def test_stale_schedule_still_sends(self):
         self.write_schedule(updated_at=datetime.now(timezone.utc) - timedelta(days=2))
         common.atomic_json_write(self.state, {"resetsSent": {"trigger": "older-key"}})
         vps_notifier.run_check(self.config)
-        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(len(self.sent), 2)
+
+    def test_partial_delivery_retries_only_the_failed_destination(self):
+        self.write_schedule()
+        common.atomic_json_write(self.state, {"resetsSent": {"trigger": "older-key"}})
+        failed_once = {"value": False}
+
+        def flaky_send(_token, chat_id, message):
+            self.sent.append((chat_id, message))
+            if chat_id == "group" and not failed_once["value"]:
+                failed_once["value"] = True
+                raise RuntimeError("temporary Telegram failure")
+
+        with mock.patch.object(common, "send_telegram", side_effect=flaky_send):
+            with self.assertRaisesRegex(RuntimeError, "temporary Telegram failure"):
+                vps_notifier.run_check(self.config)
+            state = json.loads(self.state.read_text())
+            self.assertEqual(state["resetsSent"]["pendingDelivery"]["chatIds"], ["private"])
+
+            vps_notifier.run_check(self.config)
+
+        self.assertEqual([chat_id for chat_id, _ in self.sent], ["private", "group", "group"])
+        final_state = json.loads(self.state.read_text())
+        self.assertNotIn("pendingDelivery", final_state["resetsSent"])
 
     def test_unavailable_schedule_warns_without_sending_or_mutating_state(self):
         records = live_records()
