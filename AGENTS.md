@@ -1,6 +1,7 @@
 # Agent Context
 
 Instructions for any AI agent or contributor changing this repository.
+Read `context.md` before changing this repository.
 
 ## Product purpose
 
@@ -32,6 +33,8 @@ Two halves that share one module.
 - **Runtime, never committed:** `data/schedule.json`, `data/vps-state.json`, `data/state.json`, `data/*.log`.
 
 ## Source-of-truth rules
+
+- Codex may return `usage.primary: null`; treat that as valid and show only its weekly window when present.
 
 - The Mac is authoritative whenever it is online. The trigger provider's `usage.primary.resetsAt` is the session anchor; a provider's `usage.secondary.resetsAt` is its weekly anchor. A non-trigger provider may legitimately omit `usage.primary` (Codex currently does for this account type).
 - `windowMinutes` is the repeating interval. **Never hard-code five hours, seven days, or any other interval.** If a provider stops reporting `windowMinutes` and its anchor has passed, the window is unprojectable and must be reported as unavailable, not guessed.
